@@ -1,0 +1,2 @@
+pywebview>=5
+anthropic>=0.70
