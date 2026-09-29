@@ -98,7 +98,7 @@ final class Strategist extends LobbyPlayerAi {
             if (!r.has("keep")) {
                 return stock;
             }
-            say(r, r.get("keep").getAsBoolean() ? "Bot keeps: " : "Bot mulligans: ");
+            say(r, r.get("keep").getAsBoolean() ? "Richard keeps: " : "Richard mulligans: ");
             return r.get("keep").getAsBoolean();
         }
 
@@ -160,9 +160,9 @@ final class Strategist extends LobbyPlayerAi {
             if (ph.getTurn() != plannedTurn) {
                 plannedTurn = ph.getTurn();
                 tried.clear();
-                announce.accept("Bot is thinking…");
+                announce.accept("Richard is thinking…");
                 plan = ask("turn", state());
-                say(plan, "Bot's plan: ");
+                say(plan, "Richard's plan: ");
             }
             return true;
         }
@@ -205,7 +205,7 @@ final class Strategist extends LobbyPlayerAi {
             if (options.isEmpty()) {
                 return null;
             }
-            announce.accept("Bot is considering a response…");
+            announce.accept("Richard is considering a response…");
             final JsonObject state = state();
             state.add("stack", stack());
             final JsonArray opts = new JsonArray();
@@ -219,14 +219,14 @@ final class Strategist extends LobbyPlayerAi {
             }
             final int i = r.get("respond").getAsInt();
             if (i < 0 || i >= options.size()) {
-                say(r, "Bot lets it resolve: ");
+                say(r, "Richard lets it resolve: ");
                 return new Response(null);
             }
             final SpellAbility sa = options.get(i);
             if (!aim(sa, r)) {
                 return null; // couldn't find legal targets for it: Forge's AI decides
             }
-            say(r, "Bot responds: ");
+            say(r, "Richard responds: ");
             return new Response(List.of(sa));
         }
 

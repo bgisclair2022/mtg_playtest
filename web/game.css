@@ -10,6 +10,7 @@
 .g-info { display: flex; flex-direction: column; gap: 6px; background: #0007; border: 1px solid #ffffff14; border-radius: 10px; padding: 8px; overflow: hidden; }
 .g-name { font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
 .g-name .prio { font-size: 11px; color: var(--accent); }
+.g-avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; object-position: 50% 20%; vertical-align: middle; margin-right: 8px; border: 1px solid var(--line); }
 .g-life { font-size: 34px; font-weight: 700; text-align: center; border-radius: 8px; background: #ffffff0a; cursor: pointer; line-height: 1.3; }
 .g-life.target { box-shadow: 0 0 0 2px var(--accent), 0 0 14px var(--accent); animation: pulse 1.2s infinite; }
 .g-stats { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; }
@@ -173,3 +174,11 @@
 .g-decide-box h2 { margin: 0 0 8px; }
 .g-decide-box p { margin: 0 0 14px; line-height: 1.45; }
 .gc.mana-source { box-shadow: 0 0 0 2px var(--accent), 0 0 8px #d9a44199; }
+
+/* post-game review */
+.g-review { text-align: left; margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; max-height: 50vh; overflow: auto; }
+.g-review .spinner { width: 18px; height: 18px; border-width: 3px; display: inline-block; vertical-align: middle; margin-right: 8px; }
+.g-review h3 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 0 0 6px; }
+.g-review h4 { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+.g-review ul { margin: 0; padding-left: 18px; }
+.g-review li { margin: 4px 0; font-size: 13px; }

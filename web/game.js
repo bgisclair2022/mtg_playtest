@@ -15,7 +15,7 @@ async function startGame(you, bot) {
   loading('Starting Forge… (the first game takes ~20 seconds to load cards)');
   try {
     const r = await call('start_game', you, bot);
-    Object.assign(G, { port: r.port, running: true, version: -1, state: null, askId: null, seenNotice: 0, overShown: false, actionId: null });
+    Object.assign(G, { port: r.port, running: true, version: -1, state: null, askId: null, seenNotice: 0, overShown: false, actionId: null, reviews: r.reviews });
     $('#g-autopass').checked = true;
     poll();
   } catch {
@@ -126,7 +126,7 @@ function renderPlayer(el, p, s, blocks) {
   const cmdDmg = Object.entries(p.commanderDamage).map(([n, d]) => `<span title="Commander damage from ${esc(n)}">⚔ ${d}/21</span>`).join('');
   el.innerHTML = `
     <div class="g-info">
-      <div class="g-name"><span>${esc(p.name)}${mine ? ' <span class="muted">(you)</span>' : ''}</span>${p.priority ? '<span class="prio">● priority</span>' : ''}</div>
+      <div class="g-name"><span>${mine ? '' : '<img class="g-avatar" src="richard.webp" alt="">'}${esc(p.name)}${mine ? ' <span class="muted">(you)</span>' : ''}</span>${p.priority ? '<span class="prio">● priority</span>' : ''}</div>
       <div class="g-life ${p.highlighted ? 'target' : ''} ${G.targeted?.has(`p${p.id}`) ? 'targeted' : ''}" data-player="${p.id}" title="Click to target this player">${p.life}</div>
       <div class="g-stats">
         ${mine ? '' : `<span title="Cards in hand">✋ ${p.handSize}</span>`}
@@ -138,7 +138,7 @@ function renderPlayer(el, p, s, blocks) {
       ${manaBox}
       <div class="g-cmd"></div>
     </div>
-    <div class="g-field"><div class="g-row"></div><div class="g-row lands"></div>${mine ? '' : '<div class="g-row opphand" title="The bot&#39;s hand (revealed for practice)"></div>'}</div>`;
+    <div class="g-field"><div class="g-row"></div><div class="g-row lands"></div>${mine ? '' : '<div class="g-row opphand" title="Richard&#39;s hand"></div>'}</div>`;
   el.querySelector('.g-life').onclick = () => act('player', { id: p.id });
   el.querySelectorAll('.pip').forEach((b) => b.onclick = () => act('mana', { color: b.dataset.color }));
   if (!mine) {
@@ -211,9 +211,9 @@ function friendlyPrompt(s, me) {
     const top = topOfStack(s);
     if (top) {
       const thing = `${top.card?.name || 'spell'}${top.trigger ? ' trigger' : ''}${targetText(top)}`;
-      const what = `${top.mine ? 'Your' : "The bot's"} ${thing}`;
+      const what = `${top.mine ? 'Your' : "Richard's"} ${thing}`;
       if (G.responding === top.id) {
-        return { msg: `Responding to ${top.mine ? 'your' : "the bot's"} ${thing}: click a glowing card to cast or activate it.`, hideOk: true, hideCancel: true, extra: ['Back', () => { G.responding = null; render(); }] };
+        return { msg: `Responding to ${top.mine ? 'your' : "Richard's"} ${thing}: click a glowing card to cast or activate it.`, hideOk: true, hideCancel: true, extra: ['Back', () => { G.responding = null; render(); }] };
       }
       const canRespond = s.holding || me.hand.concat(me.battlefield, me.command, me.graveyard, me.exile).some((c) => c.playable && !c.land);
       return { msg: `${what} is on the stack. Pass priority to let it resolve${canRespond ? ', or respond' : ''}.`, ok: 'Pass priority', hideCancel: true,
@@ -223,7 +223,7 @@ function friendlyPrompt(s, me) {
     if (myTurn && s.phaseKey === 'MAIN2') return { msg: 'Second main phase. Cast anything else, then end your turn.', ok: 'End turn' };
     const options = me.hand.concat(me.battlefield, me.command).filter((c) => c.playable && !c.land).map((c) => c.name);
     if (!myTurn && options.length) {
-      return { msg: `Bot's ${s.phase.toLowerCase()}. You can respond with ${[...new Set(options)].join(', ')}, or pass.`, ok: 'Pass' };
+      return { msg: `Richard's ${s.phase.toLowerCase()}. You can respond with ${[...new Set(options)].join(', ')}, or pass.`, ok: 'Pass' };
     }
     if (myTurn && s.phaseKey === 'COMBAT_DECLARE_BLOCKERS') return { msg: 'Blocks are in. Cast a combat trick, or continue to damage.', ok: 'Continue' };
     return { msg: p.message.split('\n')[0], ok: 'Pass' };
@@ -232,7 +232,7 @@ function friendlyPrompt(s, me) {
     return { msg: `${p.message.split('\n').filter(Boolean).slice(-1)[0] || 'Pay the cost'}. Click lands or other mana sources (gold), or mana in your pool.` };
   }
   if (p.input === 'InputAttack') return { msg: 'Click creatures to attack with them (click again to remove).', ok: 'Confirm attack', extra: ['Attack with all', () => act('alpha')] };
-  if (p.input === 'InputBlock') return { msg: `The bot is attacking! ${p.message} Confirm when done (or confirm with no blockers to take the damage).`, ok: 'Confirm blocks' };
+  if (p.input === 'InputBlock') return { msg: `Richard is attacking! ${p.message} Confirm when done (or confirm with no blockers to take the damage).`, ok: 'Confirm blocks' };
   return { msg: p.message };
 }
 const tidy = (msg) => msg.replace(/ \(\d+\)/g, ''); // Forge appends internal card ids like "Shock (29)"
@@ -253,14 +253,14 @@ function renderTrigger(s, me) {
     el.insertAdjacentHTML('beforeend', `<div><h2>Trigger!</h2><p>${esc(tidy(top.text))}</p>${targets}<div class="who"></div></div>`);
     el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
   }
-  el.querySelector('.who').textContent = `${top.mine ? 'Your' : "The bot's"} trigger · ${holding ? 'pass priority to resolve it, or respond' : 'resolving…'}`;
+  el.querySelector('.who').textContent = `${top.mine ? 'Your' : "Richard's"} trigger · ${holding ? 'pass priority to resolve it, or respond' : 'resolving…'}`;
   el.hidden = false;
 }
 
 function renderCenter(s, me) {
   const myTurn = s.activePlayer === me.id;
   const t = $('#g-turn');
-  t.textContent = s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : "Bot's"} turn`;
+  t.textContent = s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : "Richard's"} turn`;
   t.className = myTurn ? 'mine' : 'theirs';
   $('#g-phases').innerHTML = PHASES.map(([label, keys]) => `<span class="${keys.includes(s.phaseKey) ? 'on' : ''}">${label}</span>`).join('');
   $('#g-stack').innerHTML = '';
@@ -419,7 +419,7 @@ function renderAsk(a) {
 
 function showZone(p, zone) {
   const cards = p[zone];
-  const box = modal(`<h2>${p.local ? 'Your' : "Bot's"} ${zone} (${cards.length})</h2><div class="g-ask-items"></div>`);
+  const box = modal(`<h2>${p.local ? 'Your' : "Richard's"} ${zone} (${cards.length})</h2><div class="g-ask-items"></div>`);
   box.style.width = 'min(900px, 92vw)';
   const list = box.querySelector('.g-ask-items');
   cards.forEach((c) => { const o = document.createElement('div'); o.className = 'opt'; o.style.setProperty('--cw', '120px'); o.appendChild(slot(c)); list.appendChild(o); });
@@ -434,12 +434,27 @@ function renderGameOver(s) {
   $('#g-ask').hidden = false;
   $('#g-ask').classList.remove('peek');
   const won = s.winner && s.players.find((p) => p.local && p.name === s.winner);
-  box.innerHTML = `<div class="g-over"><h2>${won ? '🏆 You win!' : s.winner ? `${esc(s.winner === 'Bot' ? 'The bot' : s.winner)} wins` : 'Draw'}</h2>
+  box.innerHTML = `<div class="g-over"><h2>${won ? '🏆 You win!' : s.winner ? `${esc(s.winner)} wins` : 'Draw'}</h2>
     <p class="muted">Round ${s.round}</p><div class="row" style="justify-content:center">
-    <button class="primary" id="g-again">Rematch</button><button id="g-back">Back to decks</button><button id="g-stay">Look at the board</button></div></div>`;
+    <button class="primary" id="g-again">Rematch</button><button id="g-back">Back to decks</button><button id="g-stay">Look at the board</button></div>
+    ${G.reviews ? '<div class="g-review"><div class="spinner"></div> Claude is reviewing the game and updating the bot\'s lessons…</div>' : ''}</div>`;
   box.querySelector('#g-again').onclick = () => startGame(pick('#you-deck'), pick('#bot-deck'));
   box.querySelector('#g-back').onclick = leaveGame;
   box.querySelector('#g-stay').onclick = () => { $('#g-ask').hidden = true; };
+  if (G.reviews) reviewGame(box.querySelector('.g-review'));
+}
+
+// Post-game review by Claude: grades the bot's decisions (and yours) and updates data/bot-lessons.md.
+async function reviewGame(el) {
+  const r = await api.review_game();
+  if (!r || r.error) { el.innerHTML = `<span class="bad">Review failed: ${esc(r?.error || 'no answer')}</span>`; return; }
+  const mark = { optimal: '✅', fine: '➖', mistake: '❌' };
+  el.innerHTML = `<h3>Game review</h3><p>${esc(r.summary)}</p>
+    <h4>Richard's key decisions</h4><ul>${(r.bot_decisions || []).map((d) => `<li>${mark[d.verdict] || ''} <b>${esc(d.when)}</b>: ${esc(d.choice)}${d.better ? `<br><span class="muted">Better: ${esc(d.better)}</span>` : ''}</li>`).join('')}</ul>
+    ${r.your_play?.length ? `<h4>Your play</h4><ul>${r.your_play.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <div class="row"><button id="g-report">Open full report</button><button id="g-lessons">Open Richard's lessons</button></div>`;
+  el.querySelector('#g-report').onclick = () => api.open_file(r.report);
+  el.querySelector('#g-lessons').onclick = () => api.open_lessons();
 }
 
 // ---- controls ----

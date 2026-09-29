@@ -8,7 +8,9 @@ import importlib.util
 import json
 import os
 import sys
+import time
 import traceback
+import urllib.request
 import webbrowser
 
 import webview
@@ -72,8 +74,41 @@ class Api:
                        "GOLDFISH_PYTHON": sys.executable, "GOLDFISH_LLM_SCRIPT": os.path.abspath(llm.__file__)}
             if s.get("anthropic_api_key"):
                 llm_env["ANTHROPIC_API_KEY"] = s["anthropic_api_key"]
+            # every Claude decision this game is journaled for the post-game review
+            journal_dir = os.path.join(ROOT, "data", "journal")
+            os.makedirs(journal_dir, exist_ok=True)
+            self._journal = os.path.join(journal_dir, time.strftime("%Y-%m-%d_%H%M%S") + ".jsonl")
+            llm_env["GOLDFISH_JOURNAL"] = self._journal
         self._match = forge.Match(forge_dir, your_file, bot_file, s.get("username", ""), llm_env)
-        return {"port": self._match.port, "warnings": problems}
+        return {"port": self._match.port, "warnings": problems, "reviews": bool(s.get("llm_backend"))}
+
+    @_safe
+    def review_game(self):
+        """Post-game: Claude grades the bot's decisions (and yours) and updates data/bot-lessons.md."""
+        s = self._settings
+        if not s.get("llm_backend"):
+            raise ValueError("Game reviews need the advanced bot. Turn it on in Settings.")
+        if not self._match:
+            raise ValueError("No game to review.")
+        with urllib.request.urlopen(f"http://127.0.0.1:{self._match.port}/log", timeout=10) as r:
+            log = json.load(r)  # grab it now, before a rematch closes the bridge
+        winner = log.get("winner")
+        result = (f"{winner} won" if winner else "no winner (conceded or unfinished)") + f" in round {log.get('round')}. " \
+                 f"The bot is 'Bot'; the human is '{s.get('username') or 'You'}'."
+        r = llm.review(result, log.get("lines", []), getattr(self, "_journal", None), s["llm_backend"],
+                       s.get("llm_model", llm.DEFAULT_MODEL), s.get("anthropic_api_key"))
+        return {k: r.get(k) for k in ("summary", "bot_decisions", "your_play", "report")}
+
+    def open_lessons(self):
+        if not os.path.exists(llm.LESSONS_FILE):
+            os.makedirs(os.path.dirname(llm.LESSONS_FILE), exist_ok=True)
+            with open(llm.LESSONS_FILE, "w", encoding="utf-8") as f:
+                f.write(llm.LESSONS_TEMPLATE)
+        os.startfile(llm.LESSONS_FILE)
+
+    def open_file(self, path):
+        if path and os.path.abspath(path).startswith(os.path.join(ROOT, "data")) and os.path.exists(path):
+            os.startfile(path)
 
     @_safe
     def set_username(self, name):

@@ -276,16 +276,17 @@ function showLlm(s) {
   $('#llm-model').hidden = !backend;
   $('#llm-key').hidden = backend !== 'api';
   $('#llm-status').innerHTML = backend === 'claude-code'
-    ? (s.claude_cli ? `Uses <code>${esc(s.claude_cli)}</code>. If the bot never shows a plan, open a terminal and run <code>claude</code> once to log in.`
+    ? (s.claude_cli ? `Uses <code>${esc(s.claude_cli)}</code>. If Richard never shows a plan, open a terminal and run <code>claude</code> once to log in.`
                     : '<span class="bad">Claude Code CLI not found.</span> Install Claude Code or the Claude desktop app.')
     : backend === 'api' ? (s.anthropic_sdk ? 'Billed per token to your key at platform.claude.com.' : '<span class="bad">Run setup.bat again to install the anthropic package.</span>')
     : '';
 }
 $('#llm-backend').onchange = async () => showLlm(await call('settings'));
+$('#open-lessons').onclick = () => api.open_lessons();
 $('#set-llm').onclick = async () => {
   await call('set_llm', $('#llm-backend').value, $('#llm-model').value, $('#llm-key').value.trim());
   loadSettings();
-  toast('Advanced bot saved. Applies to the next game');
+  toast('Smarter Richard saved. Applies to the next game');
 };
 $('#set-forge').onclick = async () => { await call('set_forge_dir', $('#forge-dir').value.trim()); loadSettings(); toast('Forge folder saved'); };
 $('#browse-forge').onclick = async () => { await call('browse_forge_dir'); loadSettings(); };

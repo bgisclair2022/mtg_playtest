@@ -10,7 +10,7 @@
   <h1>MTG Goldfish</h1>
   <nav>
     <button class="tab active" data-view="decks">Decks</button>
-    <button class="tab" data-view="test">Test vs Bot</button>
+    <button class="tab" data-view="test">Test vs Richard</button>
     <button class="tab" data-view="settings">Settings</button>
   </nav>
   <button id="user-chip" class="user-chip" title="Change your name" hidden></button>
@@ -26,7 +26,7 @@
       </div>
       <h3>My decks</h3>
       <ul id="my-decks"></ul>
-      <h3>Preset bot decks</h3>
+      <h3>Preset decks for Richard</h3>
       <ul id="preset-decks"></ul>
     </aside>
 
@@ -53,11 +53,11 @@
       <div class="matchup">
         <label>Your deck<select id="you-deck"></select></label>
         <span class="vs">vs</span>
-        <label>Bot deck<select id="bot-deck"></select></label>
+        <label>Richard's deck<select id="bot-deck"></select></label>
       </div>
       <div class="row">
-        <button id="play-game" class="primary">Play vs Bot</button>
-        <span class="muted">Plays right here on Forge's full rules engine against its AI. The bot's turns run automatically.</span>
+        <button id="play-game" class="primary">Play vs Richard</button>
+        <span class="muted">Plays right here on Forge's full rules engine against Richard (its AI). His turns run automatically.</span>
       </div>
       <div class="row">
         <button id="play-forge">Open in Forge instead</button>
@@ -97,9 +97,9 @@
       <div id="install-out"></div>
     </div>
     <div class="panel">
-      <h2>Advanced bot (Claude)</h2>
-      <p class="muted">Once per bot turn, and at its mulligan, Claude reads the game and tells Forge's AI what to cast first,
-        what to hold back and how to attack. Forge still plays the cards; if Claude is slow or fails, the bot plays as usual.
+      <h2>Smarter Richard (Claude)</h2>
+      <p class="muted">Once per turn of Richard's, and at its mulligan, Claude reads the game and tells Forge's AI what to cast first,
+        what to hold back and how to attack. Forge still plays the cards; if Claude is slow or fails, Richard plays as usual.
         Only in-app games use it, not simulations.</p>
       <div class="row">
         <select id="llm-backend">
@@ -112,6 +112,9 @@
         <button id="set-llm">Save</button>
       </div>
       <div id="llm-status" class="muted"></div>
+      <p class="muted">It also decides whether to answer your spells, and learns: after each game Claude reviews the log,
+        grades Richard's choices and rewrites <code>data/bot-lessons.md</code>, which every later decision reads.</p>
+      <div class="row"><button id="open-lessons">Open lessons file</button></div>
     </div>
   </section>
 </main>
@@ -139,7 +142,7 @@
   </div>
   <aside id="g-side">
     <div id="g-preview"><div class="muted">Hover a card to see it here.</div></div>
-    <label class="g-toggle">Bot speed
+    <label class="g-toggle">Richard's speed
       <select id="g-speed">
         <option value="7000">Slow</option>
         <option value="4000" selected>Normal</option>
@@ -147,7 +150,7 @@
         <option value="0">Instant</option>
       </select>
     </label>
-    <label class="g-toggle"><input type="checkbox" id="g-autopass" checked> Auto-pass the bot's turn</label>
+    <label class="g-toggle"><input type="checkbox" id="g-autopass" checked> Auto-pass Richard's turn</label>
     <label class="g-toggle"><input type="checkbox" id="g-autopay"> Auto-pay mana (untick to choose lands)</label>
     <div id="g-log"></div>
     <div class="row">

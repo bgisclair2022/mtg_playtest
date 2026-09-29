@@ -130,9 +130,9 @@ public final class Bridge {
         final RegisteredPlayer human = RegisteredPlayer.forCommander(yours);
         human.setPlayer(new LobbyPlayerHuman(args.length > 3 && !args[3].isBlank() ? args[3] : "You"));
         final RegisteredPlayer ai = RegisteredPlayer.forCommander(bots);
-        final LobbyPlayer stock = GamePlayerUtil.createAiPlayer("Bot", 1);
+        final LobbyPlayer stock = GamePlayerUtil.createAiPlayer("Richard", 1);
         ai.setPlayer(System.getenv("GOLDFISH_LLM") == null ? stock // "advanced bot" off: plain Forge AI
-                : new Strategist("Bot", ((forge.ai.LobbyPlayerAi) stock).getAiProfile(), text -> gui.pace(text, null, 1.0)));
+                : new Strategist("Richard", ((forge.ai.LobbyPlayerAi) stock).getAiProfile(), text -> gui.pace(text, null, 1.0)));
 
         final HostedMatch match = new HostedMatch();
         // Subscribe the pacer as soon as the game exists, before its thread starts playing.
@@ -159,6 +159,7 @@ public final class Bridge {
             gui.awaitChange(since, 20_000);
             reply(ex, gui.snapshot());
         });
+        server.createContext("/log", ex -> reply(ex, gui.fullLog())); // whole game, for the post-game review
         server.createContext("/act", ex -> {
             final JsonObject a = body(ex);
             if (a != null) {
@@ -219,22 +220,22 @@ public final class Bridge {
                 final StackItemView under = beneath(e.si());
                 if (under != null) {
                     final String whose = under.getActivatingPlayer() != null && !isBot(under.getActivatingPlayer()) ? "your" : "its own";
-                    gui.pace("Bot responds with " + name(host) + targets + " (in response to " + whose + " " + name(under.getSourceCard()) + ")", host, 1.2);
+                    gui.pace("Richard responds with " + name(host) + targets + " (in response to " + whose + " " + name(under.getSourceCard()) + ")", host, 1.2);
                 } else {
-                    gui.pace("Bot " + (e.si().isAbility() ? "activates" : "casts") + " " + name(host) + targets, host, 1.0);
+                    gui.pace("Richard " + (e.si().isAbility() ? "activates" : "casts") + " " + name(host) + targets, host, 1.0);
                 }
             } else if (ev instanceof GameEventLandPlayed e && isBot(e.player())) {
-                gui.pace("Bot plays " + name(e.land()), e.land(), 0.5);
+                gui.pace("Richard plays " + name(e.land()), e.land(), 0.5);
             } else if (ev instanceof GameEventAttackersDeclared e && isBot(e.player()) && !e.attackersMap().isEmpty()) {
                 final int n = e.attackersMap().size();
-                gui.pace("Bot attacks with " + n + (n == 1 ? " creature" : " creatures"), e.attackersMap().values().iterator().next(), 1.3);
+                gui.pace("Richard attacks with " + n + (n == 1 ? " creature" : " creatures"), e.attackersMap().values().iterator().next(), 1.3);
             } else if (ev instanceof GameEventBlockersDeclared e && isBot(e.defendingPlayer()) && !e.blockers().isEmpty()) {
-                gui.pace("Bot declares blockers", null, 1.0);
+                gui.pace("Richard declares blockers", null, 1.0);
             } else if (ev instanceof GameEventSpellResolved e && e.spell() != null && e.spell().getHostCard() != null
                     && isBot(e.spell().getHostCard().getController())) {
                 gui.pace(name(e.spell().getHostCard()) + (e.hasFizzled() ? " fizzles" : " resolves"), e.spell().getHostCard(), 0.6);
             } else if (ev instanceof GameEventTurnBegan e) {
-                gui.pace("Round " + (e.turnNumber() + 1) / 2 + " · " + (isBot(e.turnOwner()) ? "Bot's turn" : "Your turn"), null, isBot(e.turnOwner()) ? 0.7 : 0.3);
+                gui.pace("Round " + (e.turnNumber() + 1) / 2 + " · " + (isBot(e.turnOwner()) ? "Richard's turn" : "Your turn"), null, isBot(e.turnOwner()) ? 0.7 : 0.3);
             }
         }
 
@@ -441,6 +442,24 @@ public final class Bridge {
                 }
                 default -> { }
             }
+        }
+
+        /** Every log line of the game so far, oldest first (phase/mana noise dropped). */
+        JsonObject fullLog() {
+            final JsonObject o = new JsonObject();
+            final JsonArray lines = new JsonArray();
+            final GameView gv = getGameView();
+            if (gv != null && gv.getGameLog() != null) {
+                for (GameLogEntry e : new ArrayList<>(gv.getGameLog().getAllEntries())) {
+                    if (e.type() != GameLogEntryType.PHASE && e.type() != GameLogEntryType.MANA) {
+                        lines.add(e.message());
+                    }
+                }
+                o.addProperty("round", (gv.getTurn() + 1) / 2);
+                o.addProperty("winner", gv.isGameOver() ? gv.getWinningPlayerName() : null);
+            }
+            o.add("lines", lines);
+            return o;
         }
 
         /** Publish what the bot just did, then hold the game thread so you can take it in. */
@@ -742,7 +761,7 @@ public final class Bridge {
             o.addProperty("highlighted", isHighlighted(pv));
             o.addProperty("library", pv.getZoneSize(ZoneType.Library));
             o.addProperty("handSize", pv.getZoneSize(ZoneType.Hand));
-            o.add("hand", zone(pv, ZoneType.Hand, !mine)); // the bot's hand is revealed: this is a practice tool
+            o.add("hand", zone(pv, ZoneType.Hand)); // the bot's cards arrive hidden, so the board shows card backs
             o.add("battlefield", zone(pv, ZoneType.Battlefield));
             o.add("graveyard", zone(pv, ZoneType.Graveyard));
             o.add("exile", zone(pv, ZoneType.Exile));

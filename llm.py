@@ -7,6 +7,7 @@ Two backends, picked on the Settings tab:
 The bridge runs `python llm.py` with {"kind": "mulligan"|"turn"|"respond", "state": {...}} on stdin and reads the plan
 JSON from stdout. Any failure prints {} so Forge's own AI simply decides as usual.
 """
+import datetime
 import glob
 import json
 import os
@@ -14,6 +15,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+LESSONS_FILE = os.path.join(ROOT, "data", "bot-lessons.md")  # what the bot has learned; rewritten after each reviewed game
+REVIEWS_DIR = os.path.join(ROOT, "data", "reviews")
+LESSONS_TEMPLATE = "# Bot lessons\n\nNothing learned yet. Lessons are added after each reviewed game.\n"
 
 MODELS = {"claude-opus-5-5": "Opus 5.5 (smartest)", "claude-sonnet-5-5": "Sonnet 5.5 (balanced)",
           "claude-haiku-4-5": "Haiku 4.5 (fastest)"}
@@ -58,7 +64,33 @@ SCHEMAS = {
     },
 }
 
+_VERDICTS = ["optimal", "fine", "mistake"]
+SCHEMAS["review"] = {
+    "type": "object", "additionalProperties": False,
+    "required": ["summary", "bot_decisions", "your_play", "lessons_md"],
+    "properties": {
+        "summary": {"type": "string", "description": "2-3 sentences: why the game was won or lost, and the turning point"},
+        "bot_decisions": {"type": "array", "description": "the bot's most important decisions, in game order", "items": {
+            "type": "object", "additionalProperties": False, "required": ["when", "choice", "verdict", "better"],
+            "properties": {
+                "when": {"type": "string", "description": "e.g. 'Round 4, response to Ram Through'"},
+                "choice": {"type": "string"},
+                "verdict": {"type": "string", "enum": _VERDICTS},
+                "better": {"type": "string", "description": "the better line if not optimal, else empty"},
+            }}},
+        "your_play": {"type": "array", "items": {"type": "string"},
+                      "description": "up to 4 short observations on the human's play: missed lines or strong plays"},
+        "lessons_md": {"type": "string", "description": (
+            "the COMPLETE updated lessons file in Markdown: keep what still holds, merge duplicates, fix anything this "
+            "game proved wrong, add new lessons. General and reusable (not about this one game), grouped under short "
+            "headings, at most ~40 bullets.")},
+    },
+}
+
 ASKS = {
+    "review": ("The game is over. Review it: `result`, the full game `log` (oldest first) and `decisions`, the bot's "
+               "journal (what it saw, what it chose and why). Judge whether the bot's choices were optimal, note the "
+               "human's key plays, then rewrite the bot's lessons file (`current_lessons`) so future games go better."),
     "mulligan": "Decide whether to keep this opening hand.",
     "turn": "It is your main phase. Plan this turn: what to cast first, what to hold, and how to attack.",
     "respond": ("Your opponent just put something on the stack (`stack`, top first). You may answer it with one of your "
@@ -81,14 +113,28 @@ def claude_exe():
     return max(bundled, key=lambda p: [int(x) for x in os.path.basename(os.path.dirname(p)).split(".") if x.isdigit()]) if bundled else None
 
 
+def lessons():
+    try:
+        with open(LESSONS_FILE, encoding="utf-8") as f:
+            return f.read()[:8000]
+    except OSError:
+        return ""
+
+
+def _system(kind):
+    """The strategist prompt, plus everything learned so far (the review rewrites the lessons itself)."""
+    learned = lessons() if kind != "review" else ""
+    return SYSTEM + (f"\n\nLessons from your previous games (follow them unless the situation clearly differs):\n{learned}" if learned else "")
+
+
 def _via_claude_code(kind, state, model):
     exe = claude_exe()
     if not exe:
         raise RuntimeError("Claude Code CLI not found. Install it or the Claude desktop app, then run `claude` once to log in.")
     out = subprocess.run(
         [exe, "-p", "--output-format", "json", "--model", model, "--tools", "", "--setting-sources", "",
-         "--strict-mcp-config", "--system-prompt", SYSTEM, "--json-schema", json.dumps(SCHEMAS[kind])],
-        input=_prompt(kind, state), capture_output=True, text=True, encoding="utf-8", timeout=90,
+         "--strict-mcp-config", "--system-prompt", _system(kind), "--json-schema", json.dumps(SCHEMAS[kind])],
+        input=_prompt(kind, state), capture_output=True, text=True, encoding="utf-8", timeout=240 if kind == "review" else 90,
         cwd=tempfile.gettempdir(), creationflags=NO_WINDOW)
     reply = json.loads(out.stdout)
     if reply.get("is_error"):
@@ -100,8 +146,8 @@ def _via_claude_code(kind, state, model):
 def _via_api(kind, state, model, api_key):
     import anthropic
     extra = {} if model.startswith("claude-haiku") else {"effort": "low"}  # effort isn't supported on Haiku 4.5
-    response = anthropic.Anthropic(api_key=api_key or None, timeout=90).messages.create(
-        model=model, max_tokens=4000, system=SYSTEM,
+    response = anthropic.Anthropic(api_key=api_key or None, timeout=240 if kind == "review" else 90).messages.create(
+        model=model, max_tokens=16000 if kind == "review" else 4000, system=_system(kind),
         messages=[{"role": "user", "content": _prompt(kind, state)}],
         output_config={"format": {"type": "json_schema", "schema": SCHEMAS[kind]}, **extra})
     if response.stop_reason != "end_turn":
@@ -116,11 +162,53 @@ def plan(kind, state, backend, model=DEFAULT_MODEL, api_key=None):
     return _via_claude_code(kind, state, model)
 
 
+def review(result, log, journal_path, backend, model=DEFAULT_MODEL, api_key=None):
+    """Grade a finished game, rewrite the lessons file, and save a Markdown report. Returns the review dict."""
+    decisions = []
+    try:
+        with open(journal_path, encoding="utf-8") as f:
+            decisions = [json.loads(line) for line in f if line.strip()]
+    except (OSError, TypeError):
+        pass
+    state = {"result": result, "log": log[-600:], "decisions": decisions[-60:], "current_lessons": lessons() or LESSONS_TEMPLATE}
+    r = plan("review", state, backend, model, api_key)
+
+    os.makedirs(os.path.dirname(LESSONS_FILE), exist_ok=True)
+    if r.get("lessons_md", "").strip():
+        with open(LESSONS_FILE, "w", encoding="utf-8") as f:
+            f.write(r["lessons_md"].strip()[:8000] + "\n")
+    os.makedirs(REVIEWS_DIR, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+    lines = [f"# Game review · {stamp.replace('_', ' ')}", "", f"**Result:** {result}", "", r.get("summary", ""), "",
+             "## Bot decisions", ""]
+    lines += [f"- **{d['when']}** · {d['choice']} · *{d['verdict']}*" + (f"; better: {d['better']}" if d.get("better") else "")
+              for d in r.get("bot_decisions", [])]
+    lines += ["", "## Your play", ""] + [f"- {x}" for x in r.get("your_play", [])]
+    r["report"] = os.path.join(REVIEWS_DIR, f"{stamp}.md")
+    with open(r["report"], "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return r
+
+
+def _journal(kind, state, result):
+    """Record a decision for the post-game review (the bridge passes the journal path per game)."""
+    path = os.environ.get("GOLDFISH_JOURNAL")
+    if not path or not result:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"kind": kind, "turn": state.get("turn"), "stack": state.get("stack"),
+                                "options": state.get("options"), "decision": result}) + "\n")
+    except OSError:
+        pass
+
+
 def main():
     try:
         req = json.load(sys.stdin)
         result = plan(req["kind"], req["state"], os.environ.get("GOLDFISH_LLM"), os.environ.get("GOLDFISH_LLM_MODEL"),
                       os.environ.get("ANTHROPIC_API_KEY"))
+        _journal(req["kind"], req["state"], result)
     except Exception as e:  # noqa: BLE001 - the bot falls back to Forge's AI
         print(f"llm: {type(e).__name__}: {e}", file=sys.stderr)
         result = {}
