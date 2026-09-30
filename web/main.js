@@ -102,7 +102,7 @@ function Home({ decks, match, setMatch, art, settings, user, go, onPlay, openDec
       </div>
     </div>
     <div class="shelf">
-      <div class="shelf-head"><h2>Jace's decks</h2><span class="muted">Built from EDHREC, tuned to Bracket 3</span></div>
+      <div class="shelf-head"><h2>Jace's decks</h2><span class="muted">Built from EDHREC: five mono-color archetypes, a partner pair and a companion deck</span></div>
       <div class="tiles">${presets.map((d) => html`<${DeckTile} key=${d.name} d=${d} art=${art} onOpen=${() => openDeck(refOf(d))}
         onPlay=${() => { setMatch({ ...match, bot: refOf(d) }); toast(`Jace's deck: ${d.name}`); }} />`)}</div>
     </div>
