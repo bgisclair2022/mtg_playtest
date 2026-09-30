@@ -71,7 +71,8 @@ const ZONES = '.g-hand, .g-field.me, .g-field.opp, .g-stack, .g-opphand, .g-bar.
 const zoneOf = (el) => { const z = el.closest(ZONES); return z ? z.className + (z.closest('.g-bar.opp') ? ' opp' : '') : ''; };
 function snapshotRects() {
   rects = new Map();
-  document.querySelectorAll('#view-game [data-cid]').forEach((el) => rects.set(el.dataset.cid, { r: el.getBoundingClientRect(), zone: zoneOf(el) }));
+  // r: where it is on screen (for moves between zones); x/y: its layout spot, ignoring hover lifts and tapping
+  document.querySelectorAll('#view-game [data-cid]').forEach((el) => rects.set(el.dataset.cid, { r: el.getBoundingClientRect(), x: el.offsetLeft, y: el.offsetTop, zone: zoneOf(el) }));
 }
 function playFlip() {
   if (!rects.size) return;
@@ -79,18 +80,26 @@ function playFlip() {
     const was = rects.get(el.dataset.cid);
     const after = el.getBoundingClientRect();
     if (!after.width) return;
-    // Only cards that changed zone (hand -> stack -> battlefield -> ...) glide; a card that merely shifted because
-    // something else changed size snaps into place, so the board doesn't wobble on every update.
-    if (was && was.zone === zoneOf(el)) return;
-    const before = was?.r;
+    const zone = zoneOf(el);
+    const sameZone = was && was.zone === zone;
+    // Cards that changed zone glide there; in your hand the others slide to close the gap. Elsewhere a card that merely
+    // shifted because something else changed size snaps into place, so the board doesn't wobble.
+    if (sameZone && !zone.startsWith('g-hand')) return;
+    // within the hand, only a real change of spot counts (not a hover lift in progress)
+    if (sameZone && Math.abs(was.x - el.offsetLeft) < 2 && Math.abs(was.y - el.offsetTop) < 2) return;
+    const before = sameZone ? { left: after.left + was.x - el.offsetLeft, top: after.top + was.y - el.offsetTop, width: after.width } : was?.r;
+    const moves = before && (Math.abs(before.left - after.left) >= 2 || Math.abs(before.top - after.top) >= 2 || Math.abs(before.width / after.width - 1) >= 0.02);
+    if (before && !moves) return;
+    // a new slide starts from wherever the card is right now (the measurement includes any slide in progress)
+    el.getAnimations().filter((x) => !(x instanceof CSSTransition)).forEach((x) => x.cancel());
     if (!before) { // new to the visible board (drawn, created, revealed)
-      el.animate([{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' });
+      el.animate([{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: 'ease-out' });
       return;
     }
-    const dx = before.left - after.left, dy = before.top - after.top, sx = before.width / after.width;
-    if (Math.abs(dx) < 2 && Math.abs(dy) < 2 && Math.abs(sx - 1) < 0.02) return;
+    const dx = before.left - after.left, dy = before.top - after.top, sx = sameZone ? 1 : before.width / after.width;
     el.animate([{ transformOrigin: 'top left', transform: `translate(${dx}px, ${dy}px) scale(${sx})` },
-                { transformOrigin: 'top left', transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.2,.8,.2,1)' });
+                { transformOrigin: 'top left', transform: 'none' }],
+               { duration: sameZone ? 220 : 380, easing: 'cubic-bezier(.2,.8,.2,1)' });
   });
   rects = new Map();
 }
