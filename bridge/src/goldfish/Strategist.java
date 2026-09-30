@@ -98,7 +98,7 @@ final class Strategist extends LobbyPlayerAi {
             if (!r.has("keep")) {
                 return stock;
             }
-            say(r, r.get("keep").getAsBoolean() ? "Richard keeps: " : "Richard mulligans: ");
+            say(r, r.get("keep").getAsBoolean() ? Bridge.BOT_NAME + " keeps: " : Bridge.BOT_NAME + " mulligans: ");
             return r.get("keep").getAsBoolean();
         }
 
@@ -160,9 +160,9 @@ final class Strategist extends LobbyPlayerAi {
             if (ph.getTurn() != plannedTurn) {
                 plannedTurn = ph.getTurn();
                 tried.clear();
-                announce.accept("Richard is thinking…");
+                announce.accept(Bridge.BOT_NAME + " is thinking…");
                 plan = ask("turn", state());
-                say(plan, "Richard's plan: ");
+                say(plan, Bridge.BOT_NAME + "'s plan: ");
             }
             return true;
         }
@@ -205,7 +205,7 @@ final class Strategist extends LobbyPlayerAi {
             if (options.isEmpty()) {
                 return null;
             }
-            announce.accept("Richard is considering a response…");
+            announce.accept(Bridge.BOT_NAME + " is considering a response…");
             final JsonObject state = state();
             state.add("stack", stack());
             final JsonArray opts = new JsonArray();
@@ -219,14 +219,14 @@ final class Strategist extends LobbyPlayerAi {
             }
             final int i = r.get("respond").getAsInt();
             if (i < 0 || i >= options.size()) {
-                say(r, "Richard lets it resolve: ");
+                say(r, Bridge.BOT_NAME + " lets it resolve: ");
                 return new Response(null);
             }
             final SpellAbility sa = options.get(i);
             if (!aim(sa, r)) {
                 return null; // couldn't find legal targets for it: Forge's AI decides
             }
-            say(r, "Richard responds: ");
+            say(r, Bridge.BOT_NAME + " responds: ");
             return new Response(List.of(sa));
         }
 

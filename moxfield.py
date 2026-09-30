@@ -57,6 +57,7 @@ def fetch(url_or_id):
     return {
         "name": d["name"],
         "commander": "\n".join(n for _, n in names("commanders")),
+        "companion": "\n".join(n for _, n in names("companions")),
         "list": "\n".join(f"{q} {n}" for q, n in sorted(names("mainboard"), key=lambda e: e[1])),
         "source": d.get("publicUrl", ""),
     }

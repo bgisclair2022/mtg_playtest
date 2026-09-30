@@ -87,3 +87,4 @@ pre.tail { background: var(--bg); border: 1px solid var(--line); border-radius: 
 .modal-box li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
 .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel-2); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 10px 14px; max-width: 420px; z-index: 30; white-space: pre-wrap; }
 .toast.error { border-left-color: var(--danger); }
+.edhrec ul { margin: 0; padding-left: 18px; columns: 2; } .edhrec li { margin: 3px 0; font-size: 13px; break-inside: avoid; }

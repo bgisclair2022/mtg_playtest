@@ -16,6 +16,7 @@ import webbrowser
 import webview
 
 import decks
+import edhrec
 import forge
 import llm
 import moxfield
@@ -94,7 +95,7 @@ class Api:
             log = json.load(r)  # grab it now, before a rematch closes the bridge
         winner = log.get("winner")
         result = (f"{winner} won" if winner else "no winner (conceded or unfinished)") + f" in round {log.get('round')}. " \
-                 f"The bot is 'Bot'; the human is '{s.get('username') or 'You'}'."
+                 f"The bot is 'Jace'; the human is '{s.get('username') or 'You'}'."
         r = llm.review(result, log.get("lines", []), getattr(self, "_journal", None), s["llm_backend"],
                        s.get("llm_model", llm.DEFAULT_MODEL), s.get("anthropic_api_key"))
         return {k: r.get(k) for k in ("summary", "bot_decisions", "your_play", "report")}
@@ -157,6 +158,14 @@ class Api:
     @_safe
     def check_deck(self, deck):
         return decks.resolve(deck)
+
+    @_safe
+    def edhrec_suggestions(self, deck):
+        """EDHREC's popular / high-synergy cards for this deck's commander that it doesn't run yet."""
+        commanders, entries = decks.commander_and_cards(deck)
+        if not commanders:
+            return []
+        return edhrec.suggestions(commanders[0], [n for _, n in entries] + commanders)
 
     # ---- moxfield ----
     @_safe
@@ -225,7 +234,8 @@ class Api:
         resolved = decks.resolve(deck)
         if not resolved["commanders"]:
             raise ValueError(f"{deck['name']}: no commander found.")
-        return forge.export(deck["name"], decks.to_dck(deck["name"], resolved)), resolved["problems"]
+        rename = forge.alternate_names(self._forge_dir())  # e.g. Universes Within names -> Forge's names
+        return forge.export(deck["name"], decks.to_dck(deck["name"], resolved, rename)), resolved["problems"]
 
     @_safe
     def play_in_forge(self, you, bot):

@@ -36,7 +36,7 @@ document.addEventListener('click', (e) => {
 
 // ---- deck library ----
 function renderDeckList() {
-  const item = (d) => `<li data-name="${esc(d.name)}" data-preset="${d.preset}" class="${current && current.name === d.name && current.preset === d.preset ? 'active' : ''}">
+  const item = (d) => `<li title="${esc(d.description || "")}" data-name="${esc(d.name)}" data-preset="${d.preset}" class="${current && current.name === d.name && current.preset === d.preset ? 'active' : ''}">
     ${esc(d.name)}<small>${esc(d.commander.split('\n').join(' + ') || 'no commander')}</small></li>`;
   $('#my-decks').innerHTML = decks.filter((d) => !d.preset).map(item).join('') || '<li class="muted">No saved decks yet</li>';
   $('#preset-decks').innerHTML = decks.filter((d) => d.preset).map(item).join('');
@@ -65,6 +65,7 @@ async function openDeck(name, preset) {
 function fillEditor(d, preset = false) {
   $('#deck-name').value = d.name || '';
   $('#deck-commander').value = (d.commander || '').split('\n').join('; ');
+  $('#deck-companion').value = d.companion || '';
   $('#deck-list').value = d.list || '';
   $('#deck-source').innerHTML = d.source ? `From <a href="#" data-url="${esc(d.source)}">Moxfield</a>` : (preset ? 'Preset: save a copy to edit it' : '');
   $('#delete-deck').disabled = preset;
@@ -72,7 +73,7 @@ function fillEditor(d, preset = false) {
 }
 
 function editorDeck() {
-  return { name: $('#deck-name').value.trim(), commander: $('#deck-commander').value, list: $('#deck-list').value, source: current?.source || '' };
+  return { name: $('#deck-name').value.trim(), commander: $('#deck-commander').value, companion: $('#deck-companion').value.trim(), list: $('#deck-list').value, source: current?.source || '' };
 }
 
 $('#new-deck').onclick = () => { current = null; fillEditor({}); renderDeckList(); $('#deck-name').focus(); };
@@ -95,7 +96,20 @@ $('#delete-deck').onclick = async () => {
 $('#check-deck').onclick = async () => {
   const done = busy($('#check-deck'), 'Checking…');
   try { renderReport(await call('check_deck', editorDeck())); } finally { done(); }
+  showSuggestions(editorDeck());
 };
+
+// What real Commander decks with this commander play that this deck doesn't (EDHREC).
+async function showSuggestions(deck) {
+  const box = document.createElement('div');
+  box.className = 'group edhrec';
+  box.innerHTML = '<h4>EDHREC: popular with your commander, not in this deck</h4><p class="muted">Loading…</p>';
+  $('#deck-report').appendChild(box);
+  const list = await api.edhrec_suggestions(deck);
+  if (!list || list.error || !list.length) { box.querySelector('p').textContent = list?.error || 'No suggestions.'; return; }
+  box.innerHTML = `<h4>EDHREC: popular with your commander, not in this deck</h4><ul>${list.map((c) =>
+    `<li><b>${esc(c.name)}</b> <span class="muted">synergy ${c.synergy >= 0 ? '+' : ''}${Math.round(c.synergy * 100)}%${c.inclusion != null ? ` · in ${c.inclusion}% of decks` : ''} · ${esc(c.section)}</span></li>`).join('')}</ul>`;
+}
 
 function renderReport(r) {
   const s = r.stats, max = Math.max(1, ...s.curve);
@@ -121,6 +135,7 @@ function renderReport(r) {
       <div class="stat muted">${types}</div>
     </div>
     <div class="group"><h4>Commander</h4><div class="grid">${r.commanders.map((c) => tile(c, 'commander')).join('')}</div></div>
+    ${r.companions?.length ? `<div class="group"><h4>Companion <span class="muted">(outside the 100; Forge checks its condition at game start)</span></h4><div class="grid">${r.companions.map((c) => tile(c, 'commander')).join('')}</div></div>` : ''}
     ${Object.entries(byType).map(([t, cs]) => `<div class="group"><h4>${t} (${cs.reduce((a, c) => a + c.count, 0)})</h4>
       <div class="grid">${cs.sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name)).map((c) => tile(c)).join('')}</div></div>`).join('')}`;
 }
@@ -276,7 +291,7 @@ function showLlm(s) {
   $('#llm-model').hidden = !backend;
   $('#llm-key').hidden = backend !== 'api';
   $('#llm-status').innerHTML = backend === 'claude-code'
-    ? (s.claude_cli ? `Uses <code>${esc(s.claude_cli)}</code>. If Richard never shows a plan, open a terminal and run <code>claude</code> once to log in.`
+    ? (s.claude_cli ? `Uses <code>${esc(s.claude_cli)}</code>. If Jace never shows a plan, open a terminal and run <code>claude</code> once to log in.`
                     : '<span class="bad">Claude Code CLI not found.</span> Install Claude Code or the Claude desktop app.')
     : backend === 'api' ? (s.anthropic_sdk ? 'Billed per token to your key at platform.claude.com.' : '<span class="bad">Run setup.bat again to install the anthropic package.</span>')
     : '';
@@ -286,7 +301,7 @@ $('#open-lessons').onclick = () => api.open_lessons();
 $('#set-llm').onclick = async () => {
   await call('set_llm', $('#llm-backend').value, $('#llm-model').value, $('#llm-key').value.trim());
   loadSettings();
-  toast('Smarter Richard saved. Applies to the next game');
+  toast('Smarter Jace saved. Applies to the next game');
 };
 $('#set-forge').onclick = async () => { await call('set_forge_dir', $('#forge-dir').value.trim()); loadSettings(); toast('Forge folder saved'); };
 $('#browse-forge').onclick = async () => { await call('browse_forge_dir'); loadSettings(); };

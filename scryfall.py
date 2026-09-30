@@ -80,6 +80,13 @@ def _store(key, card):
     with _lock:
         for k in {key, s["name"], s["forge_name"]}:
             _cache[k.lower()] = s
+        # Each face of a double-faced card under its own name and art, so a transformed or
+        # daybound/nightbound card shows the right side (Forge reports the face that's up).
+        for face in card.get("card_faces") or []:
+            if face.get("image_uris") and face.get("name") and face["name"].lower() not in _cache:
+                _cache[face["name"].lower()] = {**s, "type_line": face.get("type_line", s["type_line"]),
+                                                "oracle_text": face.get("oracle_text", ""),
+                                                "image": face["image_uris"].get("normal")}
 
 
 def lookup(names):

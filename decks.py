@@ -10,12 +10,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR = os.path.join(ROOT, "data", "decks")
 PRESET_DIR = os.path.join(ROOT, "presets")
 SECTION = re.compile(r"^(commanders?|companions?|deck|main ?deck|mainboard|sideboard|maybeboard|considering|tokens?)\s*:?\s*(\(\d+\))?$", re.I)
-SKIP_SECTIONS = ("side", "maybe", "consider", "token", "companion")
+SKIP_SECTIONS = ("side", "maybe", "consider", "token")
 
 
 def parse(text):
-    """Parse Moxfield/Arena/MTGO-style text. Returns (commander names, [(count, name)])."""
-    commanders, cards, section = [], [], "deck"
+    """Parse Moxfield/Arena/MTGO-style text. Returns (commander names, [(count, name)], companion names)."""
+    commanders, cards, companions, section = [], [], [], "deck"
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith(("//", "#")):
@@ -31,15 +31,28 @@ def parse(text):
         line = re.sub(r"\s+\([A-Za-z0-9]{2,6}\)(\s+\S+)?\s*$", "", line)  # "(SET) 123"
         m = re.match(r"(\d+)x?\s+(.+)", line)
         count, name = (int(m[1]), m[2].strip()) if m else (1, line)
-        if is_commander:
+        if section.startswith("companion"):
+            companions.append(name)  # companions start outside the game (CR 702.139)
+        elif is_commander:
             commanders.append(name)
         else:
             cards.append((count, name))
-    return commanders, cards
+    return commanders, cards, companions
+
+
+def commander_and_cards(deck):
+    """(commander names, [(count, name)]) for a saved deck: the Commander field wins over list markers."""
+    return _commander_names(deck)
+
+
+def _companion_names(deck):
+    """The deck's companion: the Companion field, else a 'Companion' section in the list."""
+    typed = [n.strip() for n in re.split(r"[\n;]", deck.get("companion") or "") if n.strip()]
+    return typed or parse(deck.get("list", ""))[2]
 
 
 def _commander_names(deck):
-    names, entries = parse(deck.get("list", ""))
+    names, entries, _ = parse(deck.get("list", ""))
     typed = [n.strip() for n in re.split(r"[\n;]", deck.get("commander") or "") if n.strip()]
     if typed:
         lowered = {n.lower() for n in typed}
@@ -65,7 +78,8 @@ def list_all():
             for f in sorted(os.listdir(folder)):
                 if f.endswith(".json"):
                     d = _read(os.path.join(folder, f))
-                    out.append({"name": d["name"], "commander": d.get("commander", ""), "preset": preset})
+                    out.append({"name": d["name"], "commander": d.get("commander", ""), "preset": preset,
+                                "description": d.get("description", "")})
     return out
 
 
@@ -77,7 +91,7 @@ def save(deck):
     if not deck.get("name", "").strip():
         raise ValueError("Give the deck a name first.")
     os.makedirs(SAVE_DIR, exist_ok=True)
-    keep = {k: deck.get(k, "") for k in ("name", "commander", "list", "source")}
+    keep = {k: deck.get(k, "") for k in ("name", "commander", "companion", "list", "source")}
     with open(os.path.join(SAVE_DIR, _slug(deck["name"]) + ".json"), "w", encoding="utf-8") as f:
         json.dump(keep, f, indent=2)
 
@@ -97,7 +111,10 @@ def _unlimited(card):
 def resolve(deck):
     """Look every card up on Scryfall and check Commander deck rules."""
     cmd_names, entries = _commander_names(deck)
-    found, not_found = scryfall.lookup(cmd_names + [n for _, n in entries])
+    comp_names = _companion_names(deck)
+    lowered = {n.lower() for n in comp_names}
+    entries = [(c, n) for c, n in entries if n.lower() not in lowered]  # a companion is outside the 100
+    found, not_found = scryfall.lookup(cmd_names + [n for _, n in entries] + comp_names)
     problems = [f"Not found on Scryfall: {n}" for n in not_found]
     commanders = [found[n.lower()] for n in cmd_names if n.lower() in found]
     cards = [(c, found[n.lower()]) for c, n in entries if n.lower() in found]
@@ -117,6 +134,14 @@ def resolve(deck):
     banned = sorted({d["name"] for _, d in cards if d["legal"] == "banned"} | {d["name"] for d in commanders if d["legal"] == "banned"})
     if banned:
         problems.append("Banned in Commander: " + ", ".join(banned))
+    companions = [found[n.lower()] for n in comp_names if n.lower() in found]
+    for comp in companions:  # its deckbuilding condition is checked by Forge when the game starts
+        if not re.search(r"^Companion\b", comp["oracle_text"], re.M):
+            problems.append(f"{comp['name']} doesn't have companion.")
+        if not set(comp["color_identity"]) <= identity:
+            problems.append(f"Companion {comp['name']} is outside the commander's color identity.")
+        if comp["legal"] == "banned":
+            problems.append(f"Companion {comp['name']} is banned in Commander.")
 
     curve = [0] * 8
     types = {}
@@ -129,16 +154,25 @@ def resolve(deck):
     avg = sum(i * n for i, n in enumerate(curve)) / spells if spells else 0
     return {
         "commanders": commanders,
+        "companions": companions,
         "cards": [{"count": c, **d} for c, d in cards],
         "problems": problems,
         "stats": {"total": total, "curve": curve, "types": types, "avg_cmc": round(avg, 2), "identity": [c for c in "WUBRG" if c in identity]},
     }
 
 
-def to_dck(name, resolved):
-    """Forge deck file text."""
+def to_dck(name, resolved, rename=None):
+    """Forge deck file text. `rename` maps alternate printed names (e.g. Universes Within) to Forge's names."""
+    rename = rename or {}
+
+    def forge_name(d):
+        return rename.get(d["forge_name"].lower(), d["forge_name"])
+
     lines = ["[metadata]", f"Name={name}", "[Commander]"]
-    lines += [f"1 {d['forge_name']}" for d in resolved["commanders"]]
+    lines += [f"1 {forge_name(d)}" for d in resolved["commanders"]]
     lines.append("[Main]")
-    lines += [f"{c['count']} {c['forge_name']}" for c in resolved["cards"]]
+    lines += [f"{c['count']} {forge_name(c)}" for c in resolved["cards"]]
+    if resolved.get("companions"):  # Forge offers sideboard companions at the start of the game
+        lines.append("[Sideboard]")
+        lines += [f"1 {forge_name(d)}" for d in resolved["companions"]]
     return "\n".join(lines) + "\n"

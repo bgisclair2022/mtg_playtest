@@ -2,11 +2,20 @@
 // The bridge owns all rules: every click here is forwarded to Forge, which decides what it means.
 const G = { port: null, running: false, version: -1, state: null, images: {}, asked: new Set(), askId: null, sel: [], seenNotice: 0, lastRef: null };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Every step of the turn (CR 500-514); combat is split so each sub-step is visible.
 const PHASES = [
   ['Upkeep', ['UNTAP', 'UPKEEP']], ['Draw', ['DRAW']], ['Main 1', ['MAIN1']],
-  ['Combat', ['COMBAT_BEGIN', 'COMBAT_DECLARE_ATTACKERS', 'COMBAT_DECLARE_BLOCKERS', 'COMBAT_FIRST_STRIKE_DAMAGE', 'COMBAT_DAMAGE', 'COMBAT_END']],
+  ['Begin combat', ['COMBAT_BEGIN']], ['Attackers', ['COMBAT_DECLARE_ATTACKERS']], ['Blockers', ['COMBAT_DECLARE_BLOCKERS']],
+  ['Damage', ['COMBAT_FIRST_STRIKE_DAMAGE', 'COMBAT_DAMAGE']], ['End combat', ['COMBAT_END']],
   ['Main 2', ['MAIN2']], ['End', ['END_OF_TURN', 'CLEANUP']],
 ];
+const STEP_NAMES = {
+  UPKEEP: 'upkeep', DRAW: 'draw step', MAIN1: 'first main phase', MAIN2: 'second main phase', COMBAT_BEGIN: 'beginning of combat',
+  COMBAT_DECLARE_ATTACKERS: 'declare attackers step', COMBAT_DECLARE_BLOCKERS: 'declare blockers step',
+  COMBAT_FIRST_STRIKE_DAMAGE: 'first-strike damage step', COMBAT_DAMAGE: 'combat damage step', COMBAT_END: 'end of combat',
+  END_OF_TURN: 'end step', CLEANUP: 'cleanup step',
+};
+const stepName = (key, fallback) => STEP_NAMES[key] || (fallback || '').toLowerCase();
 const MANA_BG = { W: '#f3eccd', U: '#5b9bd5', B: '#a99bab', R: '#e0634b', G: '#5fae6a', C: '#c9c5bd' };
 
 // ---- lifecycle ----
@@ -43,7 +52,7 @@ async function poll() {
       render();
     } catch {
       if (!(await api.game_alive())) {
-        loading('Forge stopped unexpectedly. Details are in data/bridge.log.', true);
+        loading('Forge stopped unexpectedly. Details are in data/logs/.', true);
         G.running = false;
         return;
       }
@@ -107,6 +116,8 @@ function render() {
   renderAction(s.lastAction);
   renderTrigger(s, me);
   renderDecision(s);
+  renderCombat(s, me, opp);
+  renderTray(s);
   if (s.gameOver) renderGameOver(s); else renderAsk(s.ask);
 }
 
@@ -124,21 +135,24 @@ function renderPlayer(el, p, s, blocks) {
   const targeting = /^InputSelect(Targets|Entities)/.test(s.prompt.input || '') && /player|opponent|any target/i.test(s.prompt.message);
   p.highlighted = p.highlighted || targeting;
   const cmdDmg = Object.entries(p.commanderDamage).map(([n, d]) => `<span title="Commander damage from ${esc(n)}">⚔ ${d}/21</span>`).join('');
+  const status = Object.entries(p.playerCounters || {}).map(([k, n]) => `<span class="status" title="${esc(k)} counters">${COUNTER_ICONS[k.toLowerCase()] || '●'} ${n} ${esc(k.toLowerCase())}</span>`).join('')
+    + (p.flags || []).map((f) => `<span class="status flag">${f === 'Monarch' ? '👑 ' : f === 'Initiative' ? '🏰 ' : ''}${esc(f)}</span>`).join('');
+  const hot = (zone) => p[zone].some((c) => c.playable || c.selectable) ? 'hot' : ''; // something usable in there
   el.innerHTML = `
     <div class="g-info">
-      <div class="g-name"><span>${mine ? '' : '<img class="g-avatar" src="richard.webp" alt="">'}${esc(p.name)}${mine ? ' <span class="muted">(you)</span>' : ''}</span>${p.priority ? '<span class="prio">● priority</span>' : ''}</div>
+      <div class="g-name"><span>${mine ? '' : '<img class="g-avatar" src="img/jace.png" alt="">'}${esc(p.name)}${mine ? ' <span class="muted">(you)</span>' : ''}</span>${p.priority ? '<span class="prio">● priority</span>' : ''}</div>
       <div class="g-life ${p.highlighted ? 'target' : ''} ${G.targeted?.has(`p${p.id}`) ? 'targeted' : ''}" data-player="${p.id}" title="Click to target this player">${p.life}</div>
       <div class="g-stats">
         ${mine ? '' : `<span title="Cards in hand">✋ ${p.handSize}</span>`}
         <span title="Library">📚 ${p.library}</span>
-        <button data-zone="graveyard" title="Graveyard">🪦 ${p.graveyard.length}</button>
-        <button data-zone="exile" title="Exile">⌀ ${p.exile.length}</button>
-        ${cmdDmg}
+        <button data-zone="graveyard" class="${hot('graveyard')}" title="Graveyard">🪦 ${p.graveyard.length}</button>
+        <button data-zone="exile" class="${hot('exile')}" title="Exile">⌀ ${p.exile.length}</button>
+        ${cmdDmg}${status}
       </div>
       ${manaBox}
       <div class="g-cmd"></div>
     </div>
-    <div class="g-field"><div class="g-row"></div><div class="g-row lands"></div>${mine ? '' : '<div class="g-row opphand" title="Richard&#39;s hand"></div>'}</div>`;
+    <div class="g-field"><div class="g-row"></div><div class="g-row lands"></div>${mine ? '' : `<div class="g-row opphand" title="${esc(p.name)}&#39;s hand"></div>`}</div>`;
   el.querySelector('.g-life').onclick = () => act('player', { id: p.id });
   el.querySelectorAll('.pip').forEach((b) => b.onclick = () => act('mana', { color: b.dataset.color }));
   if (!mine) {
@@ -146,14 +160,16 @@ function renderPlayer(el, p, s, blocks) {
     p.hand.forEach((c) => { const sl = slot(c); sl.querySelector('.gc').onclick = null; oh.appendChild(sl); });
   }
   el.querySelectorAll('[data-zone]').forEach((b) => b.onclick = () => showZone(p, b.dataset.zone));
-  p.command.forEach((c) => el.querySelector('.g-cmd').appendChild(slot(c)));
+  p.command.forEach((c) => el.querySelector('.g-cmd').appendChild(slot(c, { tax: (p.commanderTax || {})[c.id] })));
   const [row, lands] = el.querySelectorAll('.g-row');
-  const nonLands = p.battlefield.filter((c) => !c.land);
+  const everything = s.players.flatMap((pl) => pl.battlefield);
+  const onHost = (c) => c.attachedTo && everything.some((h) => h.id === c.attachedTo);
+  const nonLands = p.battlefield.filter((c) => !c.land && !onHost(c));
   nonLands.sort((a, b) => (b.creature - a.creature));
-  nonLands.forEach((c) => row.appendChild(slot(c, { blocks: blocks[c.id] })));
+  nonLands.forEach((c) => row.appendChild(hostSlot(c, { blocks: blocks[c.id] }, everything.filter((a) => a.attachedTo === c.id))));
   // group identical lands so a 40-land Commander board stays readable
   const groups = [];
-  for (const c of p.battlefield.filter((c) => c.land)) {
+  for (const c of p.battlefield.filter((c) => c.land && !onHost(c))) {
     const key = [c.name, c.tapped, c.selectable, c.highlighted, c.playable, c.manaSource].join('|');
     const g = groups.find((x) => x.key === key && !c.attachedTo && !Object.keys(c.counters).length);
     if (g) g.cards.push(c); else groups.push({ key, cards: [c] });
@@ -169,6 +185,19 @@ function renderHand(me) {
   me.hand.forEach((c) => hand.appendChild(slot(c)));
 }
 
+// A permanent with whatever is attached to it (auras, equipment) shown small underneath.
+function hostSlot(c, opts, attached) {
+  if (!attached.length) return slot(c, opts);
+  const wrap = document.createElement('div');
+  wrap.className = 'gc-host';
+  wrap.appendChild(slot(c, opts));
+  const row = document.createElement('div');
+  row.className = 'gc-attached';
+  attached.forEach((a) => row.appendChild(slot(a)));
+  wrap.appendChild(row);
+  return wrap;
+}
+
 function slot(c, opts = {}) {
   const s = document.createElement('div');
   s.className = 'gc-slot' + (c.tapped ? ' tapped' : '') + (c.attacking ? ' attacking' : '');
@@ -179,16 +208,21 @@ function slot(c, opts = {}) {
 function cardEl(c, opts = {}) {
   const el = document.createElement('div');
   const flags = ['selectable', 'playable', 'highlighted', 'attacking', 'blocking'].filter((f) => c[f]);
-  if (c.manaSource && /^InputPayMana/.test(G.state?.prompt?.input || '')) flags.push(c.manaSource > 1 ? 'selectable' : 'mana-source');
-  el.className = 'gc ' + flags.join(' ') + (c.hidden ? ' back' : '') + (G.targeted?.has(c.id) ? ' targeted' : '');
+  const input = G.state?.prompt?.input || '';
+  if (c.manaSource && /^InputPayMana/.test(input)) flags.push(c.manaSource > 1 ? 'selectable' : 'mana-source');
+  if (c.manaSource && /^Input(Block|Attack)$/.test(input) && !c.attacking && !c.blocking) flags.push('mana-source'); // could attack/block
+  el.className = 'gc ' + flags.join(' ') + (c.hidden ? ' back' : '') + (G.targeted?.has(c.id) ? ' targeted' : '') + (c.phasedOut ? ' phased' : '');
   const img = !c.hidden && !c.token && G.images[c.name];
   el.innerHTML = c.hidden ? '' : img ? `<img src="${esc(img)}" alt="${esc(c.name)}">`
     : `<div class="gc-text"><b>${esc(c.name)}</b><small>${esc(c.type)}</small><p>${esc(c.text)}</p></div>`;
   if (c.creature) el.innerHTML += `<span class="pt ${c.damage ? 'hurt' : ''}">${c.power}/${c.toughness - (c.damage || 0)}</span>`;
+  if (c.faceDown) el.innerHTML += `<span class="facedown" title="${c.hidden ? 'Face-down 2/2' : 'Face-down on the table (only you see what it is)'}">face-down</span>`;
+  if (c.phasedOut) el.innerHTML += '<span class="facedown">phased out</span>';
   if (c.loyalty) el.innerHTML += `<span class="pt">◆${esc(c.loyalty)}</span>`;
   const counters = Object.entries(c.counters || {}).map(([k, v]) => `${v} ${k}`).join(', ');
   if (counters) el.innerHTML += `<span class="badge">${esc(counters)}</span>`;
   if (opts.count > 1) el.innerHTML += `<span class="count">×${opts.count}</span>`;
+  if (opts.tax) el.innerHTML += `<span class="count" title="Commander tax">+${opts.tax}</span>`;
   if (c.sick && c.creature && !c.hidden) el.innerHTML += '<span class="sick" title="Summoning sick">💤</span>';
   if (opts.blocks) el.innerHTML += `<span class="blocks">blocks ${esc(opts.blocks)}</span>`;
   if (G.targeted?.has(c.id)) el.innerHTML += '<span class="crosshair" title="Targeted">🎯</span>';
@@ -211,9 +245,9 @@ function friendlyPrompt(s, me) {
     const top = topOfStack(s);
     if (top) {
       const thing = `${top.card?.name || 'spell'}${top.trigger ? ' trigger' : ''}${targetText(top)}`;
-      const what = `${top.mine ? 'Your' : "Richard's"} ${thing}`;
+      const what = `${top.mine ? 'Your' : `${botName()}'s`} ${thing}`;
       if (G.responding === top.id) {
-        return { msg: `Responding to ${top.mine ? 'your' : "Richard's"} ${thing}: click a glowing card to cast or activate it.`, hideOk: true, hideCancel: true, extra: ['Back', () => { G.responding = null; render(); }] };
+        return { msg: `Responding to ${top.mine ? 'your' : `${botName()}'s`} ${thing}: click a glowing card to cast or activate it.`, hideOk: true, hideCancel: true, extra: ['Back', () => { G.responding = null; render(); }] };
       }
       const canRespond = s.holding || me.hand.concat(me.battlefield, me.command, me.graveyard, me.exile).some((c) => c.playable && !c.land);
       return { msg: `${what} is on the stack. Pass priority to let it resolve${canRespond ? ', or respond' : ''}.`, ok: 'Pass priority', hideCancel: true,
@@ -221,20 +255,23 @@ function friendlyPrompt(s, me) {
     }
     if (myTurn && s.phaseKey === 'MAIN1') return { msg: 'Your main phase: play a land and cast spells (green = playable). Next goes to combat.', ok: 'To combat' };
     if (myTurn && s.phaseKey === 'MAIN2') return { msg: 'Second main phase. Cast anything else, then end your turn.', ok: 'End turn' };
-    const options = me.hand.concat(me.battlefield, me.command).filter((c) => c.playable && !c.land).map((c) => c.name);
-    if (!myTurn && options.length) {
-      return { msg: `Richard's ${s.phase.toLowerCase()}. You can respond with ${[...new Set(options)].join(', ')}, or pass.`, ok: 'Pass' };
+    // Any other step: you have priority in it (CR 117.3a). The bridge holds when you can act, else passes shortly.
+    const step = `${myTurn ? 'Your' : `${botName()}'s`} ${stepName(s.phaseKey, s.phase)}`;
+    const options = me.hand.concat(me.battlefield, me.command, me.graveyard, me.exile).filter((c) => c.playable && !c.land).map((c) => c.name);
+    if (s.holding && options.length) {
+      return { msg: `${step}. You have priority: respond with ${[...new Set(options)].join(', ')}, or pass.`, ok: 'Pass priority', hideCancel: !myTurn };
     }
-    if (myTurn && s.phaseKey === 'COMBAT_DECLARE_BLOCKERS') return { msg: 'Blocks are in. Cast a combat trick, or continue to damage.', ok: 'Continue' };
-    return { msg: p.message.split('\n')[0], ok: 'Pass' };
+    return { msg: `${step}. Nothing to respond with, passing priority…`, ok: 'Pass priority', hideCancel: !myTurn };
   }
   if (/^InputPayMana/.test(p.input || '')) {
     return { msg: `${p.message.split('\n').filter(Boolean).slice(-1)[0] || 'Pay the cost'}. Click lands or other mana sources (gold), or mana in your pool.` };
   }
   if (p.input === 'InputAttack') return { msg: 'Click creatures to attack with them (click again to remove).', ok: 'Confirm attack', extra: ['Attack with all', () => act('alpha')] };
-  if (p.input === 'InputBlock') return { msg: `Richard is attacking! ${p.message} Confirm when done (or confirm with no blockers to take the damage).`, ok: 'Confirm blocks' };
+  if (p.input === 'InputBlock') return { msg: `Declare blockers: ${p.message} Confirm when done, or confirm with none to take the damage.`, ok: 'Confirm blocks' };
   return { msg: p.message };
 }
+const COUNTER_ICONS = { poison: '☠', energy: '⚡', experience: '✦', rad: '☢', ticket: '🎟' };
+const botName = () => G.state?.players?.find((p) => !p.local)?.name || 'The bot';
 const tidy = (msg) => msg.replace(/ \(\d+\)/g, ''); // Forge appends internal card ids like "Shock (29)"
 const topOfStack = (s) => s.stack.find((x) => x.top) || s.stack[0] || null;
 const targetText = (it) => (it.targets?.length ? ` → ${it.targets.map((t) => t.name).join(', ')}` : '');
@@ -253,14 +290,15 @@ function renderTrigger(s, me) {
     el.insertAdjacentHTML('beforeend', `<div><h2>Trigger!</h2><p>${esc(tidy(top.text))}</p>${targets}<div class="who"></div></div>`);
     el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
   }
-  el.querySelector('.who').textContent = `${top.mine ? 'Your' : "Richard's"} trigger · ${holding ? 'pass priority to resolve it, or respond' : 'resolving…'}`;
+  el.querySelector('.who').textContent = `${top.mine ? 'Your' : `${botName()}'s`} trigger · ${holding ? 'pass priority to resolve it, or respond' : 'resolving…'}`;
   el.hidden = false;
 }
 
 function renderCenter(s, me) {
   const myTurn = s.activePlayer === me.id;
   const t = $('#g-turn');
-  t.textContent = s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : "Richard's"} turn`;
+  t.textContent = (s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : `${botName()}'s`} turn`)
+    + (s.dayNight === 'day' ? ' · ☀ Day' : s.dayNight === 'night' ? ' · ☾ Night' : '');
   t.className = myTurn ? 'mine' : 'theirs';
   $('#g-phases').innerHTML = PHASES.map(([label, keys]) => `<span class="${keys.includes(s.phaseKey) ? 'on' : ''}">${label}</span>`).join('');
   $('#g-stack').innerHTML = '';
@@ -323,13 +361,52 @@ function renderAction(a) {
   actionTimer = setTimeout(() => { el.hidden = true; }, Math.max(a.ms, 900) + 300);
 }
 
+// Declare attackers / blockers (turn-based actions, CR 508.1 / 509.1): a clear banner, clicks pass through to the board.
+function renderCombat(s, me, opp) {
+  const el = $('#g-combat'), input = s.prompt.input;
+  if (input !== 'InputBlock' && input !== 'InputAttack') { el.hidden = true; return; }
+  if (input === 'InputBlock') {
+    const attackers = s.combat.map((c) => opp.battlefield.find((x) => x.id === c.attacker)).filter(Boolean);
+    const unblocked = s.combat.filter((c) => !c.blockers.length).map((c) => opp.battlefield.find((x) => x.id === c.attacker)).filter(Boolean);
+    const incoming = unblocked.reduce((t, c) => t + (c.power || 0), 0);
+    el.innerHTML = `<h2>⚔ ${esc(botName())} attacks with ${attackers.length} creature${attackers.length === 1 ? '' : 's'}</h2>
+      <p>${attackers.map((c) => `<b>${esc(c.name)}</b> ${c.power}/${c.toughness}`).join(' · ')}</p>
+      <p>${esc(tidy(s.prompt.message))}</p>
+      <p>Click your creature (gold = can block) to block that attacker, or click another attacker first to switch.
+      Unblocked damage right now: <b>${incoming}</b>. Then press Confirm blocks.</p>`;
+  } else {
+    el.innerHTML = `<h2>⚔ Declare attackers</h2><p>Click your creatures (gold = can attack) to attack ${esc(botName())}, then Confirm attack.</p>`;
+  }
+  el.hidden = false;
+}
+
+// Cards you can use (or must pick) that live in a graveyard or exile, surfaced so you don't have to go looking.
+function renderTray(s) {
+  const el = $('#g-tray');
+  const items = [];
+  for (const pl of s.players) {
+    for (const c of pl.librarySelectable || []) items.push({ c, where: `${pl.local ? 'your' : `${pl.name}'s`} library` });
+    for (const zone of ['graveyard', 'exile']) {
+      for (const c of pl[zone]) {
+        if (c.selectable || (pl.local && c.playable)) items.push({ c, where: `${pl.local ? 'your' : `${pl.name}'s`} ${zone}` });
+      }
+    }
+  }
+  if (!items.length) { el.hidden = true; return; }
+  el.innerHTML = '<div class="lbl">Usable from graveyard / exile / library</div><div class="row"></div>';
+  const row = el.querySelector('.row');
+  items.forEach(({ c, where }) => { const sl = slot(c); sl.title = where; row.appendChild(sl); });
+  wantImages(items.map((x) => x.c));
+  el.hidden = false;
+}
+
 // Forge asks some yes/no questions through the prompt bar (InputConfirm); show them as a proper dialog.
 function renderDecision(s) {
   const el = $('#g-decide'), p = s.prompt;
   const show = /^InputConfirm/.test(p.input || '') && p.input !== 'InputConfirmMulligan' && !s.ask && p.okOn && !s.gameOver;
   if (!show) { el.hidden = true; return; }
   const cmdZone = /command zone/i.test(p.message);
-  const name = p.card?.name || 'Your commander';
+  const name = p.card?.name || (cmdZone ? p.message.split(':')[0] : '') || 'Your commander'; // Forge names it in the text
   const title = cmdZone ? `Your commander ${esc(name)} left play` : 'Decision';
   const text = cmdZone ? `It went to your graveyard or exile. Move it to the command zone (so you can recast it), or leave it where it is?` : esc(tidy(p.message));
   const [yes, no] = cmdZone ? ['Command zone', 'Leave it'] : [p.ok, p.cancel];
@@ -388,6 +465,14 @@ function renderAsk(a) {
       };
       list.appendChild(o);
     });
+    if (a.items.length > 20) { // long lists get a filter
+      list.insertAdjacentHTML('beforebegin', '<input class="g-filter" placeholder="Type to filter…">');
+      const f = box.querySelector('.g-filter');
+      f.oninput = () => list.querySelectorAll('.opt').forEach((o, j) => {
+        o.hidden = !a.items[j].label.toLowerCase().includes(f.value.toLowerCase());
+      });
+      setTimeout(() => f.focus(), 0);
+    }
     wantImages(a.items.map((it) => it.card).filter(Boolean));
     box.querySelector('.skip')?.addEventListener('click', () => answer([]));
     const done = box.querySelector('.done');
@@ -419,7 +504,7 @@ function renderAsk(a) {
 
 function showZone(p, zone) {
   const cards = p[zone];
-  const box = modal(`<h2>${p.local ? 'Your' : "Richard's"} ${zone} (${cards.length})</h2><div class="g-ask-items"></div>`);
+  const box = modal(`<h2>${p.local ? 'Your' : `${botName()}'s`} ${zone} (${cards.length})</h2><div class="g-ask-items"></div>`);
   box.style.width = 'min(900px, 92vw)';
   const list = box.querySelector('.g-ask-items');
   cards.forEach((c) => { const o = document.createElement('div'); o.className = 'opt'; o.style.setProperty('--cw', '120px'); o.appendChild(slot(c)); list.appendChild(o); });
@@ -450,9 +535,9 @@ async function reviewGame(el) {
   if (!r || r.error) { el.innerHTML = `<span class="bad">Review failed: ${esc(r?.error || 'no answer')}</span>`; return; }
   const mark = { optimal: '✅', fine: '➖', mistake: '❌' };
   el.innerHTML = `<h3>Game review</h3><p>${esc(r.summary)}</p>
-    <h4>Richard's key decisions</h4><ul>${(r.bot_decisions || []).map((d) => `<li>${mark[d.verdict] || ''} <b>${esc(d.when)}</b>: ${esc(d.choice)}${d.better ? `<br><span class="muted">Better: ${esc(d.better)}</span>` : ''}</li>`).join('')}</ul>
+    <h4>Jace's key decisions</h4><ul>${(r.bot_decisions || []).map((d) => `<li>${mark[d.verdict] || ''} <b>${esc(d.when)}</b>: ${esc(d.choice)}${d.better ? `<br><span class="muted">Better: ${esc(d.better)}</span>` : ''}</li>`).join('')}</ul>
     ${r.your_play?.length ? `<h4>Your play</h4><ul>${r.your_play.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    <div class="row"><button id="g-report">Open full report</button><button id="g-lessons">Open Richard's lessons</button></div>`;
+    <div class="row"><button id="g-report">Open full report</button><button id="g-lessons">Open Jace's lessons</button></div>`;
   el.querySelector('#g-report').onclick = () => api.open_file(r.report);
   el.querySelector('#g-lessons').onclick = () => api.open_lessons();
 }

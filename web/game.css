@@ -182,3 +182,27 @@
 .g-review h4 { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
 .g-review ul { margin: 0; padding-left: 18px; }
 .g-review li { margin: 4px 0; font-size: 13px; }
+
+/* declare attackers / blockers banner (clicks go through to the board) */
+#g-combat { position: absolute; left: 200px; bottom: 190px; z-index: 44; pointer-events: none; max-width: min(620px, calc(100% - 300px - 220px));
+  background: #1a0f0ef2; border: 2px solid #e0634b; border-radius: 12px; padding: 10px 16px; box-shadow: 0 0 30px #e0634b44; }
+#g-combat[hidden] { display: none; }
+#g-combat h2 { margin: 0 0 4px; font-size: 18px; color: #ff8a70; }
+#g-combat p { margin: 4px 0; font-size: 13px; }
+#g-phases span { white-space: nowrap; }
+#g-phases { flex-wrap: wrap; }
+
+/* player status, attachments, phasing, face-down, graveyard/exile tray */
+.g-stats .status { background: #2b2140; border-color: #6b4fa0; }
+.g-stats .status.flag { background: #3a2f10; border-color: var(--accent); }
+.g-stats button.hot { border-color: var(--accent); box-shadow: 0 0 8px #d9a44199; }
+.gc-host { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+.gc-attached { --cw: 42px; display: flex; gap: 3px; flex-wrap: wrap; max-width: 150px; }
+.gc.phased { opacity: .35; filter: grayscale(.8); }
+.gc .facedown { position: absolute; left: 3px; top: 3px; font-size: 10px; background: #4b3b6b; color: #fff; border-radius: 4px; padding: 0 4px; }
+#g-tray { position: absolute; right: 312px; bottom: 210px; z-index: 43; background: #101418f2; border: 1px solid var(--accent); border-radius: 10px;
+  padding: 8px 10px; --cw: 70px; max-width: 520px; }
+#g-tray[hidden] { display: none; }
+#g-tray .lbl { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; }
+#g-tray .row { margin: 0; gap: 6px; }
+.g-filter { width: 100%; margin-bottom: 8px; }

@@ -51,6 +51,36 @@ def deck_dir(forge_dir):
     return os.path.join(user_dir(forge_dir), "decks", "commander")
 
 
+def alternate_names(forge_dir):
+    """{alternate printed name (lowercase): Forge's card name}, from the Variant:...:FlavorName lines in Forge's
+    card scripts. E.g. Universes Within reprints: 'Cecily, Haunted Mage' is Forge's 'Eleven, the Mage'. Cached."""
+    import json
+    import zipfile
+    zpath = os.path.join(forge_dir, "res", "cardsfolder", "cardsfolder.zip")
+    cache = os.path.join(os.path.dirname(EXPORT_DIR), "forge-alternate-names.json")
+    try:
+        if os.path.getmtime(cache) >= os.path.getmtime(zpath):
+            with open(cache, encoding="utf-8") as f:
+                return json.load(f)
+    except OSError:
+        pass
+    out = {}
+    with zipfile.ZipFile(zpath) as z:
+        for n in z.namelist():
+            if not n.endswith(".txt"):
+                continue
+            current = None
+            for line in z.read(n).decode("utf-8", "replace").splitlines():
+                if line.startswith("Name:"):
+                    current = line[5:].strip()
+                elif line.startswith("Variant:") and ":FlavorName:" in line and current:
+                    out[line.split(":FlavorName:", 1)[1].strip().lower()] = current
+    os.makedirs(os.path.dirname(cache), exist_ok=True)
+    with open(cache, "w", encoding="utf-8") as f:
+        json.dump(out, f)
+    return out
+
+
 def export(name, dck_text):
     """Write a .dck into our own folder (sims read it from there). Returns the filename."""
     os.makedirs(EXPORT_DIR, exist_ok=True)
@@ -156,7 +186,16 @@ class Match:
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             self.port = s.getsockname()[1]
-        log = open(os.path.join(os.path.dirname(EXPORT_DIR), "bridge.log"), "w", encoding="utf-8")
+        # one log per match (data/logs/), so games running side by side don't overwrite each other's
+        logs = os.path.join(os.path.dirname(EXPORT_DIR), "logs")
+        os.makedirs(logs, exist_ok=True)
+        for old in sorted(glob.glob(os.path.join(logs, "bridge-*.log")))[:-9]:  # keep the latest 10
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+        self.log_path = os.path.join(logs, f"bridge-{time.strftime('%Y%m%d-%H%M%S')}-{self.port}.log")
+        log = open(self.log_path, "w", encoding="utf-8")
         cp = os.pathsep.join([find_jar(forge_dir), BRIDGE_CLASSES])
         self._proc = subprocess.Popen(
             ["java", "-Xmx4096m", "-cp", cp, "goldfish.Bridge", str(self.port),

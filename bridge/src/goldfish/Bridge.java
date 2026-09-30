@@ -90,11 +90,15 @@ import java.util.concurrent.TimeUnit;
  */
 public final class Bridge {
 
+    /** The bot's name at the table (the board reads it from the game state). */
+    static final String BOT_NAME = "Jace";
+
     public static void main(String[] args) throws Exception {
         final int port = Integer.parseInt(args[0]);
         System.setProperty("java.util.Arrays.useLegacyMergeSort", "true"); // same workaround Forge's own launcher uses
 
-        GuiBase.setInterface(new GuiDesktop());
+        final RoutedGui routed = new RoutedGui();
+        GuiBase.setInterface(routed);
         FModel.initialize(null, null);
         final ForgePreferences prefs = FModel.getPreferences();
         if (prefs.getPref(FPref.PLAYER_NAME).isBlank()) {
@@ -106,8 +110,9 @@ public final class Bridge {
         // Scry via "pick cards for the bottom, then order the top" (the card-display variant needs a
         // drag-and-drop list this board doesn't have, and would silently leave the library as-is).
         prefs.setPref(FPref.UI_SELECT_FROM_CARD_DISPLAYS, "false");
-        // Makes Forge publish which mana sources can pay the current cost (and which "Auto" would tap).
-        prefs.setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, "true");
+        // Off: Forge's highlight refresh evaluates abilities on the Swing thread, racing the AI (crashes). The bridge
+        // computes the same things itself on the game thread (WebGui.onInputChanged).
+        prefs.setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, "false");
 
         final Deck yours = DeckSerializer.fromFile(new File(args[1]));
         final Deck bots = DeckSerializer.fromFile(new File(args[2]));
@@ -116,6 +121,7 @@ public final class Bridge {
         }
 
         final WebGui gui = new WebGui();
+        routed.web = gui; // Forge's static prompt helpers now reach the board too
         serve(port, gui);
         // Exit when the app that launched us goes away (it holds our stdin open).
         final Thread watchdog = new Thread(() -> {
@@ -130,14 +136,16 @@ public final class Bridge {
         final RegisteredPlayer human = RegisteredPlayer.forCommander(yours);
         human.setPlayer(new LobbyPlayerHuman(args.length > 3 && !args[3].isBlank() ? args[3] : "You"));
         final RegisteredPlayer ai = RegisteredPlayer.forCommander(bots);
-        final LobbyPlayer stock = GamePlayerUtil.createAiPlayer("Richard", 1);
+        final LobbyPlayer stock = GamePlayerUtil.createAiPlayer(BOT_NAME, 1);
         ai.setPlayer(System.getenv("GOLDFISH_LLM") == null ? stock // "advanced bot" off: plain Forge AI
-                : new Strategist("Richard", ((forge.ai.LobbyPlayerAi) stock).getAiProfile(), text -> gui.pace(text, null, 1.0)));
+                : new Strategist(BOT_NAME, ((forge.ai.LobbyPlayerAi) stock).getAiProfile(), text -> gui.pace(text, null, 1.0)));
 
         final HostedMatch match = new HostedMatch();
         // Subscribe the pacer as soon as the game exists, before its thread starts playing.
         match.setStartGameHook(() -> match.getGame().subscribeToEvents(new Pacer(gui)));
-        SwingUtilities.invokeAndWait(() -> match.startMatch(GameType.Commander, null, List.of(human, ai), human, gui));
+        // The Commander variant must be *applied*, not just the game type: Forge gates Commander-only rules on it
+        // (e.g. CR 903.9a, the owner may return a commander from graveyard/exile to the command zone).
+        SwingUtilities.invokeAndWait(() -> match.startMatch(GameType.Commander, java.util.EnumSet.of(GameType.Commander), List.of(human, ai), human, gui));
         System.out.println("READY " + port);
     }
 
@@ -195,6 +203,60 @@ public final class Bridge {
         }
     }
 
+    // ---- Forge's global GUI ------------------------------------------------------
+
+    /**
+     * A few Forge prompts skip the per-game GUI and call static helpers (SGuiChoose, SOptionPane) that go to
+     * the global GUI instead, e.g. "put cards from whose graveyard?" for some costs. On the desktop GUI those
+     * would open stray Swing dialogs; here they're routed to the board like every other question.
+     */
+    static final class RoutedGui extends GuiDesktop {
+        volatile WebGui web;
+
+        @Override
+        public <T> List<T> getChoices(String message, int min, int max, Collection<T> choices, Collection<T> selected,
+                                      FSerializableFunction<T, String> display) {
+            return web == null ? super.getChoices(message, min, max, choices, selected, display)
+                    : web.getChoices(message, min, max, new ArrayList<>(choices), selected == null ? null : new ArrayList<>(selected), display);
+        }
+
+        @Override
+        public <T> List<T> order(String title, String top, int remainingObjectsMin, int remainingObjectsMax, List<T> sourceChoices, List<T> destChoices) {
+            return web == null ? super.order(title, top, remainingObjectsMin, remainingObjectsMax, sourceChoices, destChoices)
+                    : web.order(title, top, remainingObjectsMin, remainingObjectsMax, sourceChoices, destChoices, null, false, false).ordered();
+        }
+
+        @Override
+        public int showOptionDialog(String message, String title, FSkinProp icon, List<String> options, int defaultOption) {
+            return web == null ? super.showOptionDialog(message, title, icon, options, defaultOption)
+                    : web.showOptionDialog(message, title, icon, options, defaultOption);
+        }
+
+        @Override
+        public String showInputDialog(String message, String title, FSkinProp icon, String initialInput, List<String> inputOptions, boolean isNumeric) {
+            return web == null ? super.showInputDialog(message, title, icon, initialInput, inputOptions, isNumeric)
+                    : web.showInputDialog(message, title, icon, initialInput, inputOptions, isNumeric);
+        }
+
+        /** Forge's crash reporter opens a Swing dialog and blocks the game until it's closed: log it and carry on. */
+        @Override
+        public void showBugReportDialog(String title, String text, boolean showExitAppBtn) {
+            System.out.println("FORGE ERROR (" + title + "):\n" + text);
+            if (web != null) {
+                web.notice("Forge hit an internal error (" + title + "); details are in the bridge log. The game continues.");
+            }
+        }
+
+        @Override
+        public void showImageDialog(forge.localinstance.skin.ISkinImage image, String message, String title) {
+            if (web == null) {
+                super.showImageDialog(image, message, title);
+            } else {
+                web.notice(message);
+            }
+        }
+    }
+
     // ---- pacing ----------------------------------------------------------------
 
     /**
@@ -220,22 +282,22 @@ public final class Bridge {
                 final StackItemView under = beneath(e.si());
                 if (under != null) {
                     final String whose = under.getActivatingPlayer() != null && !isBot(under.getActivatingPlayer()) ? "your" : "its own";
-                    gui.pace("Richard responds with " + name(host) + targets + " (in response to " + whose + " " + name(under.getSourceCard()) + ")", host, 1.2);
+                    gui.pace(BOT_NAME + " responds with " + name(host) + targets + " (in response to " + whose + " " + name(under.getSourceCard()) + ")", host, 1.2);
                 } else {
-                    gui.pace("Richard " + (e.si().isAbility() ? "activates" : "casts") + " " + name(host) + targets, host, 1.0);
+                    gui.pace(BOT_NAME + " " + (e.si().isAbility() ? "activates" : "casts") + " " + name(host) + targets, host, 1.0);
                 }
             } else if (ev instanceof GameEventLandPlayed e && isBot(e.player())) {
-                gui.pace("Richard plays " + name(e.land()), e.land(), 0.5);
+                gui.pace(BOT_NAME + " plays " + name(e.land()), e.land(), 0.5);
             } else if (ev instanceof GameEventAttackersDeclared e && isBot(e.player()) && !e.attackersMap().isEmpty()) {
                 final int n = e.attackersMap().size();
-                gui.pace("Richard attacks with " + n + (n == 1 ? " creature" : " creatures"), e.attackersMap().values().iterator().next(), 1.3);
+                gui.pace(BOT_NAME + " attacks with " + n + (n == 1 ? " creature" : " creatures"), e.attackersMap().values().iterator().next(), 1.3);
             } else if (ev instanceof GameEventBlockersDeclared e && isBot(e.defendingPlayer()) && !e.blockers().isEmpty()) {
-                gui.pace("Richard declares blockers", null, 1.0);
+                gui.pace(BOT_NAME + " declares blockers", null, 1.0);
             } else if (ev instanceof GameEventSpellResolved e && e.spell() != null && e.spell().getHostCard() != null
                     && isBot(e.spell().getHostCard().getController())) {
                 gui.pace(name(e.spell().getHostCard()) + (e.hasFizzled() ? " fizzles" : " resolves"), e.spell().getHostCard(), 0.6);
             } else if (ev instanceof GameEventTurnBegan e) {
-                gui.pace("Round " + (e.turnNumber() + 1) / 2 + " · " + (isBot(e.turnOwner()) ? "Richard's turn" : "Your turn"), null, isBot(e.turnOwner()) ? 0.7 : 0.3);
+                gui.pace("Round " + (e.turnNumber() + 1) / 2 + " · " + (isBot(e.turnOwner()) ? BOT_NAME + "'s turn" : "Your turn"), null, isBot(e.turnOwner()) ? 0.7 : 0.3);
             }
         }
 
@@ -263,6 +325,11 @@ public final class Bridge {
     }
 
     // ---- the GUI Forge talks to ------------------------------------------------
+
+    /** Mana pool colors as the board names them, and the ManaAtom values Forge keys the pool by. */
+    static final String[] POOL_KEYS = {"W", "U", "B", "R", "G", "C"};
+    static final byte[] POOL_ATOMS = {forge.card.mana.ManaAtom.WHITE, forge.card.mana.ManaAtom.BLUE, forge.card.mana.ManaAtom.BLACK,
+            forge.card.mana.ManaAtom.RED, forge.card.mana.ManaAtom.GREEN, forge.card.mana.ManaAtom.COLORLESS};
 
     static final class WebGui extends AbstractGuiGame {
         private final Object lock = new Object();
@@ -340,6 +407,15 @@ public final class Bridge {
 
         /** Take the clicks you'd always make anyway: auto-pay mana costs, and pass priority on the bot's turn. */
         private void maybeAutoPass() {
+            try {
+                decideAutoPass();
+            } catch (RuntimeException e) {
+                System.out.println("auto-pass check failed, retrying: " + e);
+                timer.schedule(this::maybeAutoPass, 300, TimeUnit.MILLISECONDS);
+            }
+        }
+
+        private void decideAutoPass() {
             final GameView gv = getGameView();
             if (pending != null || gv == null || gv.isGameOver()) {
                 return;
@@ -359,10 +435,23 @@ public final class Bridge {
             }
             final StackItemView top = gv.peekStack();
             if (top == null) {
-                return; // empty stack: Forge only asks at stops we chose (your main phases, response windows)
+                // A step or phase with an empty stack: you have priority in it (CR 117.3a). Your main phases
+                // always wait for you. Elsewhere, hold if you have an instant-speed play; otherwise show the
+                // step for a moment (combat steps longest) and pass.
+                final PhaseType ph = gv.getPhase();
+                final boolean myTurn = gv.getPlayerTurn() != null && isLocalPlayer(gv.getPlayerTurn());
+                if (myTurn && (ph == PhaseType.MAIN1 || ph == PhaseType.MAIN2)) {
+                    holding = false;
+                    return;
+                }
+                holding = canRespondNow();
+                if (!holding && autoPass) {
+                    passStepLater(gv.getTurn(), ph, stepDelay(ph));
+                }
+                return;
             }
             // Something is on the stack. Safe to inspect the game: its thread is parked on this input.
-            final boolean canRespond = !actions(gv, true).isEmpty();
+            final boolean canRespond = canRespondNow();
             holding = canRespond;
             if (top.isTrigger()) {
                 // Triggers (yours or the bot's): the board pops up "Trigger!". Hold if you can respond;
@@ -378,6 +467,27 @@ public final class Bridge {
                 return; // hold: you can answer the bot's spell (or auto-pass is off)
             }
             passLater(top.getId(), 0); // your own spell, or nothing you could do about theirs
+        }
+
+        /** How long an empty step stays on screen before we pass for you, as a share of the bot-speed setting. */
+        private long stepDelay(PhaseType ph) {
+            final double share = switch (ph) {
+                case COMBAT_DECLARE_ATTACKERS, COMBAT_DECLARE_BLOCKERS, COMBAT_FIRST_STRIKE_DAMAGE, COMBAT_DAMAGE -> 0.4;
+                case COMBAT_BEGIN, COMBAT_END, END_OF_TURN -> 0.2;
+                default -> 0.15; // upkeep, draw, the bot's main phases
+            };
+            return (long) (paceMs * share);
+        }
+
+        /** Pass priority after a delay, if we're still in the same step with an empty stack. */
+        private void passStepLater(int turn, PhaseType phase, long delayMs) {
+            timer.schedule(() -> SwingUtilities.invokeLater(() -> {
+                final GameView g = getGameView();
+                if (pending == null && g != null && g.peekStack() == null && g.getTurn() == turn && g.getPhase() == phase
+                        && "InputPassPriority".equals(inputName())) {
+                    getGameController().selectButtonOk();
+                }
+            }), delayMs, TimeUnit.MILLISECONDS);
         }
 
         /** Pass priority after a delay, if we're still waiting on the same stack item. */
@@ -434,7 +544,10 @@ public final class Bridge {
                 }
                 case "mana" -> {
                     final String color = a.get("color").getAsString();
-                    c.useMana(color.equals("C") ? MagicColor.COLORLESS : MagicColor.fromName(color.toLowerCase().charAt(0)));
+                    final int i = java.util.Arrays.asList(POOL_KEYS).indexOf(color);
+                    if (i >= 0) {
+                        c.useMana(POOL_ATOMS[i]); // spend that mana from your pool
+                    }
                 }
                 case "autopay" -> {
                     autoPay = a.get("value").getAsBoolean();
@@ -456,6 +569,10 @@ public final class Bridge {
                     }
                 }
                 o.addProperty("round", (gv.getTurn() + 1) / 2);
+            try {
+                final Boolean day = gv.getGame().getDayTime();
+                o.addProperty("dayNight", day == null ? "" : day ? "day" : "night");
+            } catch (RuntimeException ignored) { }
                 o.addProperty("winner", gv.isGameOver() ? gv.getWinningPlayerName() : null);
             }
             o.add("lines", lines);
@@ -516,7 +633,7 @@ public final class Bridge {
             }
         }
 
-        private void notice(String text) {
+        void notice(String text) {
             synchronized (lock) {
                 final JsonObject n = new JsonObject();
                 n.addProperty("id", ++noticeSeq);
@@ -568,7 +685,7 @@ public final class Bridge {
             o.add("prompt", p);
             o.addProperty("autoPass", autoPass);
             o.addProperty("autoPay", autoPay);
-            o.addProperty("holding", holding && gv0HasStack());
+            o.addProperty("holding", holding); // true while the bridge waits for you because you have a play
 
             final GameView gv = getGameView();
             if (gv == null) {
@@ -665,50 +782,67 @@ public final class Bridge {
             return o;
         }
 
-        /** Cards you could play or activate right now (ignoring mana abilities), for highlighting. */
-        private Set<Integer> playableIds(GameView gv) {
-            if (!"InputPassPriority".equals(inputName())) {
-                if (getCurrentPlayer() != null) { // keep the mana tracker current while paying costs
-                    int sources = 0;
-                    for (Card c : gv.getGame().getPlayer(getCurrentPlayer()).getCardsIn(ZoneType.Battlefield)) {
-                        if (!c.isTapped() && !c.getManaAbilities().isEmpty() && !(c.isCreature() && c.isSick())) {
-                            sources++;
-                        }
-                    }
-                    untappedSources = sources;
-                }
-                return new HashSet<>();
+        // ---- what you can do right now, computed on the game thread -------------------------------------
+        // Evaluating abilities (canPlay, targets, costs) recomputes static effects inside the live game, so it
+        // must only ever run on Forge's game thread. Forge notifies input-queue observers from that thread at
+        // the moment it asks you something; we compute there and the rest of the bridge reads the results.
+
+        private volatile Set<Integer> manaSourcesNow = new HashSet<>();   // can pay the cost being paid
+        private volatile Set<Integer> combatReadyNow = new HashSet<>();   // could attack / block right now
+        private volatile boolean respondNow;                              // a real (non-land) play is available
+
+        /** Watch the human's input queue (called from setOriginalGameController). */
+        void watchInputs(IGameController controller) {
+            if (controller instanceof PlayerControllerHuman pch) {
+                pch.getInputQueue().addObserver((o, arg) -> onInputChanged(pch));
             }
-            return actions(gv, false);
         }
 
-        /**
-         * Cards with something you could do right now: legal timing, affordable (roughly), and at least
-         * one legal target if it targets. With {@code respondOnly}, lands are left out, so a non-empty
-         * result means "you have a real response" and the game should wait for you.
-         */
-        private Set<Integer> actions(GameView gv, boolean respondOnly) {
-            final Set<Integer> out = new HashSet<>();
-            if (getCurrentPlayer() == null) {
-                return out;
+        private void onInputChanged(PlayerControllerHuman pch) {
+            if (!Thread.currentThread().getName().startsWith("Game")) {
+                return; // inputs are also removed from the Swing thread; only the game thread may evaluate
             }
-            final Player me = gv.getGame().getPlayer(getCurrentPlayer());
-            int mana = me.getManaPool().totalMana();
-            int sources = 0;
-            for (Card c : me.getCardsIn(ZoneType.Battlefield)) { // untapped things that tap for mana right now
-                if (!c.isTapped() && !c.getManaAbilities().isEmpty() && !(c.isCreature() && c.isSick())) {
-                    mana++;
-                    sources++;
+            try {
+                final forge.gamemodes.match.input.Input in = pch.getInputQueue().getInput();
+                final String kind = in == null ? "" : in.getClass().getSimpleName();
+                final Player me = pch.getPlayer();
+                countUntappedSources(me);
+                if (kind.equals("InputPassPriority")) {
+                    final Set<Integer> all = actions(me, false);
+                    respondNow = !actions(me, true).isEmpty();
+                    holding = respondNow; // keep the snapshot's hold flag in step with this very prompt
+                    playableNow = all;
+                } else {
+                    playableNow = new HashSet<>();
+                    respondNow = false;
                 }
+                manaSourcesNow = kind.startsWith("InputPayMana") ? manaSources(me) : new HashSet<>();
+                combatReadyNow = kind.equals("InputAttack") || kind.equals("InputBlock") ? combatReady(me, kind.equals("InputAttack")) : new HashSet<>();
+            } catch (RuntimeException e) {
+                System.out.println("input evaluation failed: " + e);
             }
-            untappedSources = sources;
+            bump();
+        }
+
+        private Set<Integer> playableIds(GameView gv) {
+            return playableNow; // computed on the game thread
+        }
+
+        private boolean canRespondNow() {
+            return respondNow;
+        }
+
+        /** Cards with something you could do: legal timing, roughly affordable, a legal target if it targets. */
+        private Set<Integer> actions(Player me, boolean respondOnly) {
+            final Set<Integer> out = new HashSet<>();
+            int mana = me.getManaPool().totalMana() + untappedSources;
             for (ZoneType z : new ZoneType[]{ZoneType.Hand, ZoneType.Command, ZoneType.Battlefield, ZoneType.Graveyard, ZoneType.Exile}) {
                 for (Card c : me.getCardsIn(z)) {
                     for (SpellAbility sa : c.getAllPossibleAbilities(me, true)) {
                         if (sa.isManaAbility() || (sa.isLandAbility() && respondOnly)) {
                             continue;
                         }
-                        if (sa.isLandAbility() || (canUseNow(sa, me) && affordable(sa, mana) && hasTargets(sa))) {
+                        if (sa.isLandAbility() || (sa.canCastTiming(me) && affordable(sa, mana) && hasTargets(sa))) {
                             out.add(c.getId());
                             break;
                         }
@@ -718,33 +852,75 @@ public final class Bridge {
             return out;
         }
 
-        /**
-         * Rough, side-effect-free affordability: mana value vs. mana you could produce (colors ignored).
-         * Forge's exact check (ComputerUtilMana.canPayManaCost) can open prompts, e.g. for convoke, so it
-         * must never run from here; Forge still validates the real payment when you click.
-         */
-        private static boolean canUseNow(SpellAbility sa, Player me) {
-            try {
-                return sa.canCastTiming(me);
-            } catch (RuntimeException e) {
-                return true;
+        /** Permanents whose mana abilities can be activated now (to pay the current cost). */
+        private Set<Integer> manaSources(Player me) {
+            final Set<Integer> out = new HashSet<>();
+            for (Card c : me.getCardsIn(ZoneType.Battlefield)) {
+                for (SpellAbility sa : c.getManaAbilities()) {
+                    sa.setActivatingPlayer(me);
+                    if (sa.canPlay()) {
+                        out.add(c.getId());
+                        break;
+                    }
+                }
             }
+            return out;
+        }
+
+        /** Your creatures that could attack (your declare-attackers) or block (their attack). */
+        private Set<Integer> combatReady(Player me, boolean attacking) {
+            final Set<Integer> out = new HashSet<>();
+            final forge.game.combat.Combat combat = me.getGame().getCombat();
+            for (Card c : me.getCreaturesInPlay()) {
+                if (attacking ? forge.game.combat.CombatUtil.canAttack(c) : combat != null && forge.game.combat.CombatUtil.canBlock(c, combat)) {
+                    out.add(c.getId());
+                }
+            }
+            return out;
         }
 
         /** A targeted spell/ability only counts if something legal to target exists (e.g. Doom Blade needs a creature). */
         private static boolean hasTargets(SpellAbility sa) {
+            if (!sa.usesTargeting()) {
+                return true;
+            }
             try {
-                return !sa.usesTargeting() || sa.getTargetRestrictions().hasCandidates(sa);
+                final forge.game.spellability.TargetRestrictions tr = sa.getTargetRestrictions();
+                // Spells/abilities that target the stack (Counterspell, Mana Drain, ...): Forge's candidate lists
+                // don't see stack items, so ask about each item actually on the stack.
+                if (tr.getZone() != null && tr.getZone().contains(ZoneType.Stack)) {
+                    for (forge.game.spellability.SpellAbilityStackInstance si : sa.getHostCard().getGame().getStack()) {
+                        if (sa.canTargetSpellAbility(si.getSpellAbility())) {
+                            return true;
+                        }
+                    }
+                    if (tr.getZone().size() == 1) {
+                        return false; // only the stack, and nothing on it can be targeted
+                    }
+                }
+                return !tr.getAllCandidates(sa, true).isEmpty();
             } catch (RuntimeException e) {
                 return true; // when unsure, don't hide it
             }
         }
 
+        /** Rough affordability: mana value vs. what you could produce (colors ignored); Forge checks the real payment. */
         private static boolean affordable(SpellAbility sa, int availableMana) {
             if (sa.getPayCosts() == null || !sa.getPayCosts().hasManaCost()) {
                 return true;
             }
             return sa.getPayCosts().getTotalMana().getCMC() <= availableMana;
+        }
+
+        /** Mana tracker: your untapped permanents with a mana ability. */
+        private void countUntappedSources(Player me) {
+            int sources = 0;
+            for (Card c : me.getCardsIn(ZoneType.Battlefield)) {
+                if (!c.isTapped() && !c.getManaAbilities().isEmpty() && !(c.isCreature() && c.isSick())) {
+                    sources++;
+                }
+            }
+            untappedSources = sources;
         }
 
         private JsonObject player(PlayerView pv, GameView gv) {
@@ -766,12 +942,31 @@ public final class Bridge {
             o.add("graveyard", zone(pv, ZoneType.Graveyard));
             o.add("exile", zone(pv, ZoneType.Exile));
             o.add("command", zone(pv, ZoneType.Command));
+            // library cards an effect asks you to pick from (they're otherwise never sent)
+            final JsonArray libPick = new JsonArray();
+            if (isSelecting() && pv.getCards(ZoneType.Library) != null) {
+                for (CardView c : pv.getCards(ZoneType.Library)) {
+                    if (isSelectable(c)) {
+                        libPick.add(card(c));
+                    }
+                }
+            }
+            o.add("librarySelectable", libPick);
+            // commander tax (CR 903.8): {2} more for each previous cast from the command zone
+            final JsonObject tax = new JsonObject();
+            if (pv.getCommanders() != null) {
+                for (CardView c : pv.getCommanders()) {
+                    tax.addProperty(String.valueOf(c.getId()), 2 * pv.getCommanderCast(c));
+                }
+            }
+            o.add("commanderTax", tax);
 
             final JsonObject mana = new JsonObject();
-            for (byte b : new byte[]{MagicColor.WHITE, MagicColor.BLUE, MagicColor.BLACK, MagicColor.RED, MagicColor.GREEN, MagicColor.COLORLESS}) {
-                final int n = pv.getMana(b);
+            // the pool is keyed by ManaAtom (colorless = 32), not MagicColor (colorless = 0)
+            for (int i = 0; i < POOL_KEYS.length; i++) {
+                final int n = pv.getMana(POOL_ATOMS[i]);
                 if (n > 0) {
-                    mana.addProperty(MagicColor.toShortString(b), n);
+                    mana.addProperty(POOL_KEYS[i], n);
                 }
             }
             o.add("mana", mana);
@@ -792,6 +987,25 @@ public final class Bridge {
                 }
             }
             o.add("commanderDamage", cmd);
+
+            // player counters (poison, energy, experience, rad, ...) and designations (CR 724, 725, 702.131 ...)
+            final JsonObject pcounters = new JsonObject();
+            if (pv.getCounters() != null) {
+                for (CounterType t : pv.getCounters().elementSet()) {
+                    pcounters.addProperty(t.getName(), pv.getCounters().count(t));
+                }
+            }
+            o.add("playerCounters", pcounters);
+            final JsonArray flags = new JsonArray();
+            try { // game model read from the HTTP thread: best effort
+                final Player pl = gv.getGame().getPlayer(pv);
+                if (pl.isMonarch()) flags.add("Monarch");
+                if (pl.hasInitiative()) flags.add("Initiative");
+                if (pl.hasBlessing()) flags.add("City's blessing");
+                if (pl.getSpeed() > 0) flags.add("Speed " + pl.getSpeed());
+                if (pl.getNumRingTemptedYou() > 0) flags.add("Ring tempted ×" + pl.getNumRingTemptedYou());
+            } catch (RuntimeException ignored) { }
+            o.add("flags", flags);
             return o;
         }
 
@@ -804,7 +1018,14 @@ public final class Bridge {
             final Iterable<CardView> cs = pv.getCards(z);
             if (cs != null) {
                 for (CardView c : cs) {
-                    a.add(card(c, reveal));
+                    try {
+                        a.add(card(c, reveal));
+                    } catch (RuntimeException e) { // one odd card must not blank the whole board
+                        final JsonObject back = new JsonObject();
+                        back.addProperty("id", c.getId());
+                        back.addProperty("hidden", true);
+                        a.add(back);
+                    }
                 }
             }
             return a;
@@ -822,13 +1043,32 @@ public final class Bridge {
             o.addProperty("playable", playableNow.contains(c.getId()));
             o.addProperty("highlighted", isHighlighted(c));
             // mana sources usable for the cost being paid (2 = what Forge's "Auto" would tap)
-            o.addProperty("manaSource", getWeakSelectableStrength(c));
-            if ((!reveal && !mayView(c)) || c.isFaceDown()) {
+            o.addProperty("manaSource", manaSourcesNow.contains(c.getId()) || combatReadyNow.contains(c.getId()) ? 1 : 0);
+            o.addProperty("phasedOut", c.isPhasedOut());
+            final boolean ownFaceDown = c.isFaceDown() && c.getController() != null && isLocalPlayer(c.getController())
+                    && c.getAlternateState() != null;
+            boolean visible;
+            try {
+                visible = reveal || mayView(c);
+            } catch (RuntimeException e) { // Forge's visibility check can throw for a card mid-move (no controller yet)
+                visible = false;
+            }
+            if (!visible || (c.isFaceDown() && !ownFaceDown)) {
                 o.addProperty("hidden", true);
                 o.addProperty("tapped", c.isTapped());
+                if (c.isFaceDown() && c.getZone() == ZoneType.Battlefield) { // morph/manifest/disguise/cloak: a 2/2
+                    o.addProperty("faceDown", true);
+                    o.addProperty("creature", c.getCurrentState().getType().isCreature());
+                    o.addProperty("power", c.getCurrentState().getPower());
+                    o.addProperty("toughness", c.getCurrentState().getToughness());
+                    o.addProperty("damage", c.getDamage());
+                }
                 return o;
             }
-            final CardView.CardStateView s = c.getCurrentState();
+            final CardView.CardStateView s = ownFaceDown ? c.getAlternateState() : c.getCurrentState();
+            if (ownFaceDown) {
+                o.addProperty("faceDown", true); // you see what it really is; on the table it's a face-down 2/2
+            }
             o.addProperty("name", s.getName());
             o.addProperty("type", s.getType().toString());
             o.addProperty("text", c.getText());
@@ -842,6 +1082,11 @@ public final class Bridge {
             }
             if (s.getType().isPlaneswalker()) {
                 o.addProperty("loyalty", s.getLoyalty());
+            }
+            if (ownFaceDown) { // on the table it has its face-down characteristics
+                o.addProperty("creature", c.getCurrentState().getType().isCreature());
+                o.addProperty("power", c.getCurrentState().getPower());
+                o.addProperty("toughness", c.getCurrentState().getToughness());
             }
             o.addProperty("tapped", c.isTapped());
             o.addProperty("sick", c.isSick());
@@ -931,6 +1176,10 @@ public final class Bridge {
         // -- IGuiGame: display updates (all just bump the version)
 
         @Override protected void updateCurrentPlayer(PlayerView player) { bump(); }
+        @Override public void setOriginalGameController(PlayerView view, IGameController controller) {
+            super.setOriginalGameController(view, controller);
+            watchInputs(controller);
+        }
         @Override public void openView(TrackableCollection<PlayerView> myPlayers) { bump(); }
         @Override public void showCombat() { bump(); }
         @Override public void showPromptMessage(PlayerView playerView, String message, CardView card) {
@@ -971,26 +1220,12 @@ public final class Bridge {
         @Override public void setPlayerAvatar(LobbyPlayer player, IHasIcon ihi) { }
 
         /**
-         * Always stop in your own main phases. At the usual response windows (the bot's attack, blocks
-         * and end step, and your own blocks step) stop only if you actually hold an instant-speed play.
-         * Everything else flows by. Called on the game thread, so reading the game here is safe.
+         * Never skip a step: you receive priority in every step and phase that grants it (CR 117.3a; Forge
+         * itself gives none in untap and, normally, cleanup). Whether to hold or pass is decided in
+         * maybeAutoPass, which shows each step on the board before passing when you have nothing to do.
          */
         @Override public boolean isUiSetToSkipPhase(PlayerView playerTurn, PhaseType phase) {
-            final boolean mine = isLocalPlayer(playerTurn);
-            if (mine && (phase == PhaseType.MAIN1 || phase == PhaseType.MAIN2)) {
-                return false;
-            }
-            final boolean window = mine
-                    ? phase == PhaseType.COMBAT_DECLARE_BLOCKERS
-                    : phase == PhaseType.COMBAT_DECLARE_ATTACKERS || phase == PhaseType.COMBAT_DECLARE_BLOCKERS || phase == PhaseType.END_OF_TURN;
-            if (!window) {
-                return true;
-            }
-            try {
-                return actions(getGameView(), true).isEmpty();
-            } catch (RuntimeException e) {
-                return true;
-            }
+            return false;
         }
 
         // -- IGuiGame: questions (block the game thread until answered)
@@ -1115,8 +1350,65 @@ public final class Bridge {
             return null; // no sideboarding in Commander
         }
 
-        /** Default combat damage split: lethal to each blocker in order, the rest tramples over (or piles on the last blocker). */
+        /**
+         * CR 510.1c / 702.19b: you divide a blocked creature's damage among its blockers as you choose; with
+         * trample, each blocker must get lethal damage before any goes to the player/planeswalker/battle.
+         * One blocker and no trample leaves no choice. An illegal answer falls back to a legal default split.
+         */
         @Override public Map<CardView, Integer> assignCombatDamage(CardView attacker, List<CardView> blockers, int damage, GameEntityView defender, boolean overrideOrder, boolean maySkip) {
+            final boolean deathtouch = attacker.getCurrentState().hasDeathtouch();
+            final boolean trample = defender != null && attacker.getCurrentState().hasTrample();
+            if (damage <= 0 || blockers.isEmpty() || (blockers.size() == 1 && !trample)) {
+                return defaultCombatDamage(attacker, blockers, damage, defender);
+            }
+            final List<Object> targets = new ArrayList<>(blockers);
+            final JsonObject q = new JsonObject();
+            final JsonArray items = new JsonArray();
+            for (CardView b : blockers) {
+                final JsonObject it = new JsonObject();
+                it.addProperty("label", b.getCurrentState().getName() + " (lethal " + (deathtouch ? 1 : Math.max(0, b.getLethalDamage())) + ")");
+                it.add("card", card(b));
+                items.add(it);
+            }
+            if (trample) {
+                targets.add(null);
+                final JsonObject it = new JsonObject();
+                it.addProperty("label", (defender.getName() == null ? "Defender" : defender.getName()) + " (trample: only after every blocker has lethal)");
+                items.add(it);
+            }
+            q.add("items", items);
+            q.addProperty("amount", damage);
+            q.addProperty("atLeastOne", false);
+            q.addProperty("label", "combat damage");
+            q.add("card", card(attacker));
+            final JsonElement r = ask("distribute", attacker.getCurrentState().getName() + ": divide " + damage + " combat damage", q);
+            if (r == null || !r.isJsonArray() || r.getAsJsonArray().size() != targets.size()) {
+                return defaultCombatDamage(attacker, blockers, damage, defender);
+            }
+            final Map<CardView, Integer> m = new HashMap<>();
+            int sum = 0;
+            for (int i = 0; i < targets.size(); i++) {
+                final int n = Math.max(0, r.getAsJsonArray().get(i).getAsInt());
+                sum += n;
+                if (n > 0) {
+                    m.merge((CardView) targets.get(i), n, Integer::sum);
+                }
+            }
+            boolean legal = sum == damage;
+            if (legal && trample && m.getOrDefault(null, 0) > 0) { // trample: every blocker needs lethal first
+                for (CardView b : blockers) {
+                    legal &= m.getOrDefault(b, 0) >= (deathtouch ? 1 : Math.max(0, b.getLethalDamage()));
+                }
+            }
+            if (!legal) {
+                notice("That damage split wasn't legal, so the default was used (lethal to each blocker, the rest tramples over).");
+                return defaultCombatDamage(attacker, blockers, damage, defender);
+            }
+            return m;
+        }
+
+        /** Lethal to each blocker in order, the rest tramples over (or piles on the last blocker). */
+        private Map<CardView, Integer> defaultCombatDamage(CardView attacker, List<CardView> blockers, int damage, GameEntityView defender) {
             final Map<CardView, Integer> m = new HashMap<>();
             final boolean deathtouch = attacker.getCurrentState().hasDeathtouch();
             final boolean spill = defender != null && attacker.getCurrentState().hasTrample();
