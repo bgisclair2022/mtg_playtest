@@ -467,7 +467,7 @@ public final class Bridge {
                     holding = false;
                     return;
                 }
-                holding = canRespondNow() && (everyStep || !autoPass || worthStopping(ph, myTurn));
+                holding = canRespondNow() && (everyStep || !autoPass || worthStopping(ph, myTurn, gv));
                 if (!holding && autoPass) {
                     passStepLater(gv.getTurn(), ph, stepDelay(ph));
                 }
@@ -497,9 +497,10 @@ public final class Bridge {
         }
 
         /** Smart stops, with an empty stack: where an instant-speed play usually matters. */
-        private static boolean worthStopping(PhaseType ph, boolean myTurn) {
-            return myTurn ? ph == PhaseType.COMBAT_DECLARE_BLOCKERS // after blocks: combat tricks
-                          : ph == PhaseType.COMBAT_DECLARE_ATTACKERS || ph == PhaseType.END_OF_TURN; // their attack, their end step
+        private static boolean worthStopping(PhaseType ph, boolean myTurn, GameView gv) {
+            final boolean attacked = gv.getCombat() != null && gv.getCombat().getAttackers().iterator().hasNext();
+            return myTurn ? ph == PhaseType.COMBAT_DECLARE_BLOCKERS && attacked // after blocks: combat tricks
+                          : (ph == PhaseType.COMBAT_DECLARE_ATTACKERS && attacked) || ph == PhaseType.END_OF_TURN; // their attack, their end step
         }
 
         /** True while "Pass turn" / "To my turn" is carrying you forward; clears itself when it arrives. */
@@ -888,7 +889,7 @@ public final class Bridge {
                     playableNow = new HashSet<>();
                     respondNow = false;
                 }
-                manaSourcesNow = kind.startsWith("InputPayMana") ? manaSources(me) : new HashSet<>();
+                manaSourcesNow = kind.startsWith("InputPayMana") ? manaSources(me, in) : new HashSet<>();
                 combatReadyNow = kind.equals("InputAttack") || kind.equals("InputBlock") ? combatReady(me, kind.equals("InputAttack")) : new HashSet<>();
             } catch (RuntimeException e) {
                 System.out.println("input evaluation failed: " + e);
@@ -898,6 +899,20 @@ public final class Bridge {
 
         private Set<Integer> playableIds(GameView gv) {
             return playableNow; // computed on the game thread
+        }
+
+        /** Re-check usable mana sources mid-payment (only on the game thread, where evaluating abilities is safe). */
+        private void refreshManaSources() {
+            if (!Thread.currentThread().getName().startsWith("Game")) {
+                return;
+            }
+            try {
+                if (getGameController() instanceof PlayerControllerHuman pch && pch.getInputQueue().getInput() instanceof forge.gamemodes.match.input.InputPayMana in) {
+                    manaSourcesNow = manaSources(pch.getPlayer(), in);
+                }
+            } catch (RuntimeException e) {
+                System.out.println("mana source check failed: " + e);
+            }
         }
 
         private boolean canRespondNow() {
@@ -914,6 +929,10 @@ public final class Bridge {
                         if (sa.isManaAbility() || (sa.isLandAbility() && respondOnly)) {
                             continue;
                         }
+                        // cracking a fetch land isn't a response worth stopping the game for
+                        if (respondOnly && c.isLand() && sa.getApi() == forge.game.ability.ApiType.ChangeZone) {
+                            continue;
+                        }
                         if (sa.isLandAbility() || (sa.canCastTiming(me) && affordable(sa, mana) && hasTargets(sa))) {
                             out.add(c.getId());
                             break;
@@ -925,9 +944,17 @@ public final class Bridge {
         }
 
         /** Permanents whose mana abilities can be activated now (to pay the current cost). */
-        private Set<Integer> manaSources(Player me) {
+        private Set<Integer> manaSources(Player me, Object input) {
             final Set<Integer> out = new HashSet<>();
+            // While paying, only sources that can pay what's still owed (Forge's own check), e.g. not an Island for {G}.
+            final forge.gamemodes.match.input.InputPayMana pay = input instanceof forge.gamemodes.match.input.InputPayMana ip ? ip : null;
             for (Card c : me.getCardsIn(ZoneType.Battlefield)) {
+                if (pay != null) {
+                    if (!pay.getUsefulManaAbilities(c).isEmpty()) {
+                        out.add(c.getId());
+                    }
+                    continue;
+                }
                 for (SpellAbility sa : c.getManaAbilities()) {
                     sa.setActivatingPlayer(me);
                     if (sa.canPlay()) {
@@ -1283,6 +1310,7 @@ public final class Bridge {
         @Override public void showCombat() { bump(); }
         @Override public void showPromptMessage(PlayerView playerView, String message, CardView card) {
             final JsonObject shown = card == null ? null : card(card); // e.g. the card a scry asks "top or bottom?" about
+            refreshManaSources(); // each mana paid updates the message; re-check which sources still help
             synchronized (lock) {
                 prompt = message == null ? "" : message;
                 promptCard = shown;

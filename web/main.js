@@ -85,7 +85,7 @@ function Home({ decks, match, setMatch, art, settings, user, go, onPlay, openDec
       <div class="hero-shade"></div>
       <div class="hero-content">
         <div class="hero-text">
-          <h1>${user ? `Welcome back, ${user}` : 'Welcome'}</h1>
+          <h1>${user && html`<${Avatar} name=${user} cls="hero-avatar" />`}${user ? `Welcome back, ${user}` : 'Welcome'}</h1>
           <p>Test your Commander decks against Jace, a bot on Forge's full rules engine.</p>
         </div>
         <div class="matchup-card" data-tour="matchup">
@@ -179,7 +179,7 @@ function SimResult({ s }) {
 }
 
 // ---- settings ----
-function Settings({ settings, reload, user, onName, onTour }) {
+function Settings({ settings, reload, user, onName, onTour, onAvatar }) {
   const s = settings;
   const [dir, setDir] = useState(s?.forge_dir || '');
   const [backend, setBackend] = useState(s?.llm_backend || '');
@@ -228,12 +228,50 @@ function Settings({ settings, reload, user, onName, onTour }) {
     </div>
     <div class="panel">
       <h2>You & the guide</h2>
-      <div class="row"><span>Name at the table: <b>${user}</b></span><button onClick=${onName}>Change</button></div>
+      <div class="row"><span>Name at the table: <b>${user}</b></span><button onClick=${onName}>Change</button>
+        <button onClick=${onAvatar}>Choose avatar</button></div>
       <div class="row"><button onClick=${onTour}>Replay the app tour</button>
         <button onClick=${() => { setPref('boardTipsDone', false); toast('Board tips will show at the start of your next game.'); }}>Show board tips next game</button></div>
     </div>
   </section>`;
 }
+
+// Pick any card's art (from Scryfall) as your avatar.
+function AvatarPicker({ onClose, onPicked }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState([]);
+  const [art, setArt] = useState({});
+  const focus = useFocus();
+  useEffect(() => {
+    if (q.trim().length < 2) { setHits([]); return; }
+    const t = setTimeout(async () => {
+      const names = await api.card_search(q);
+      const list = Array.isArray(names) ? names.slice(0, 12) : [];
+      setHits(list);
+      setArt(await cardImages(list));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  const cur = prefs.avatar;
+  return html`<${Modal} onClose=${onClose} wide>
+    <h2>Choose your avatar</h2>
+    <p class="muted">Search any Magic card and pick its art. It shows next to your name at the table and on Home.</p>
+    <input ref=${focus} class="avatar-search" placeholder="Search a card, e.g. Chandra, Llanowar Elves…" value=${q} onInput=${(e) => setQ(e.target.value)} />
+    <div class="avatar-grid">
+      ${hits.map((n) => art[n] && html`<button key=${n} class=${'avatar-opt' + (cur?.name === n ? ' on' : '')} title=${n}
+          onClick=${() => onPicked({ name: n, url: artCrop(art[n]) })}>
+        <span class="av" style=${{ backgroundImage: `url("${artCrop(art[n])}")` }}></span><small>${n}</small></button>`)}
+      ${q.trim().length >= 2 && !hits.length && html`<p class="muted">No cards found.</p>`}
+    </div>
+    <div class="row" style=${{ justifyContent: 'flex-end', marginTop: '12px' }}>
+      ${cur && html`<button onClick=${() => onPicked(null)}>Use my initial</button>`}
+      <button onClick=${onClose}>Close</button>
+    </div>
+  </${Modal}>`;
+}
+const Avatar = ({ name, cls }) => prefs.avatar?.url
+  ? html`<span class=${'avatar ' + (cls || '')} style=${{ backgroundImage: `url("${prefs.avatar.url}")` }} title=${prefs.avatar.name}></span>`
+  : html`<span class=${'avatar initial ' + (cls || '')}>${(name || '?')[0].toUpperCase()}</span>`;
 
 function NamePrompt({ first, current, onDone, onClose }) {
   const [name, setName] = useState(current || '');
@@ -261,6 +299,7 @@ function App() {
   const [art, setArt] = useState({});
   const [naming, setNaming] = useState(null); // 'first' | 'change'
   const [touring, setTouring] = useState(false);
+  const [picking, setPicking] = useState(false); // avatar picker
   const [level, setLevelState] = useState('normal');
   const reload = async () => setSettings(await call('settings'));
 
@@ -314,19 +353,20 @@ function App() {
         <button class=${'tab' + (view === k ? ' active' : '')} data-tour=${'nav-' + k} onClick=${() => go(k)}>${l}</button>`)}</nav>
       <div class="spacer"></div>
       <button class=${'help-btn' + (view === 'help' ? ' active' : '')} data-tour="help-btn" onClick=${() => go('help')}>? Help</button>
-      ${user && html`<button class="user-chip" title="Change your name" onClick=${() => setNaming('change')}>👤 ${user}</button>`}
+      ${user && html`<button class="user-chip" title="Your name and avatar" onClick=${() => setPicking(true)}><${Avatar} name=${user} cls="chip-avatar" />${user}</button>`}
     </header>
     <main key=${view}>
       ${view === 'home' && html`<${Home} decks=${decks} match=${match} setMatch=${setMatch} art=${art} settings=${settings} user=${user} go=${go}
         onPlay=${play} openDeck=${openDeck} onTour=${() => setTouring(true)} level=${level} setLevel=${setLevel} />`}
       ${view === 'decks' && html`<${DecksView} decks=${decks} setDecks=${setDecks} selected=${decksSel} setSelected=${setSelected} onPlay=${playWith} />`}
       ${view === 'play' && html`<${Play} decks=${decks} match=${match} setMatch=${setMatch} art=${art} onPlay=${play} settings=${settings} level=${level} setLevel=${setLevel} go=${go} />`}
-      ${view === 'settings' && html`<${Settings} settings=${settings} reload=${reload} user=${user} onName=${() => setNaming('change')} onTour=${() => setTouring(true)} />`}
+      ${view === 'settings' && html`<${Settings} settings=${settings} reload=${reload} user=${user} onName=${() => setNaming('change')} onTour=${() => setTouring(true)} onAvatar=${() => setPicking(true)} />`}
       ${view === 'help' && html`<${HelpView} onTour=${() => setTouring(true)} onBoardTips=${() => { setPref('boardTipsDone', false); toast('Board tips will show at the start of your next game.'); }} />`}
     </main>
     ${naming && html`<${NamePrompt} first=${naming === 'first'} current=${user} onClose=${() => setNaming(null)}
       onDone=${(n) => { const first = naming === 'first'; setUser(n); setNaming(null); if (first && !prefs.tourDone) setTimeout(() => setTouring(true), 300); }} />`}
     ${touring && decks.length > 0 && html`<${Tour} steps=${steps} onDone=${endTour} />`}
+    ${picking && html`<${AvatarPicker} onClose=${() => setPicking(false)} onPicked=${(a) => { setPref('avatar', a); setPicking(false); setUser((u) => u); reload(); toast(a ? `Avatar: ${a.name}` : 'Avatar reset'); }} />`}
   </div>`;
 }
 

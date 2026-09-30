@@ -172,6 +172,31 @@ function Battlefield({ p, s, blocks }) {
   </div>`;
 }
 
+// A player's colours, from their commander's mana cost (partners combined).
+function identity(p) {
+  const cost = p.command.filter((c) => !c.hidden).map((c) => c.cost || '').join('');
+  return ['W', 'U', 'B', 'R', 'G'].filter((c) => cost.includes(c));
+}
+
+// Life total: flashes and floats a +/- when it changes.
+function Life({ p, targetable }) {
+  const prev = useRef(p.life);
+  const [deltas, setDeltas] = useState([]);
+  useEffect(() => {
+    const d = p.life - prev.current;
+    prev.current = p.life;
+    if (!d) return;
+    const id = Math.random();
+    setDeltas((cur) => [...cur, { id, d }]);
+    setTimeout(() => setDeltas((cur) => cur.filter((x) => x.id !== id)), 1400);
+  }, [p.life]);
+  const last = deltas[deltas.length - 1];
+  const cls = 'g-life' + (targetable ? ' target' : '') + (G.targeted?.has(`p${p.id}`) ? ' targeted' : '') + (last ? (last.d < 0 ? ' hurt' : ' heal') : '');
+  return html`<button class=${cls} key=${'life' + (last ? last.id : '')} title="Click to target this player" onClick=${() => act('player', { id: p.id })}>
+    ${p.life}${deltas.map((x) => html`<span key=${x.id} class=${'life-delta ' + (x.d < 0 ? 'down' : 'up')}>${x.d > 0 ? '+' : '\u2212'}${Math.abs(x.d)}</span>`)}
+  </button>`;
+}
+
 function PlayerBar({ p, s, onZone }) {
   const mine = p.local;
   const paying = mine && /^InputPayMana/.test(s.prompt.input || '');
@@ -180,14 +205,18 @@ function PlayerBar({ p, s, onZone }) {
   const hot = (zone) => p[zone].some((c) => c.playable || c.selectable);
   const pool = Object.entries(p.mana);
   const prio = p.priority && !s.gameOver;
-  return html`<div class=${'g-bar ' + (mine ? 'me' : 'opp') + (prio ? ' has-prio' : '')}>
+  const ids = identity(p);
+  const grad = (ids.length > 1 ? ids : [ids[0], ids[0]]).map((c) => MANA_BG[c] || 'var(--accent)').join(', ');
+  const idStyle = { '--id': MANA_BG[ids[0]] || 'var(--accent)', '--id-grad': `linear-gradient(90deg, ${grad})` };
+  return html`<div class=${'g-bar ' + (mine ? 'me' : 'opp') + (prio ? ' has-prio' : '')} style=${idStyle}>
     <div class="g-who">
-      ${mine ? html`<span class="g-avatar you">${(p.name || '?')[0].toUpperCase()}</span>` : html`<img class="g-avatar" src="img/jace.png" alt="" />`}
+      ${!mine ? html`<img class="g-avatar" src="img/jace.png" alt="" />`
+        : prefs.avatar?.url ? html`<img class="g-avatar" src=${prefs.avatar.url} alt="" title=${prefs.avatar.name} />`
+        : html`<span class="g-avatar you">${(p.name || '?')[0].toUpperCase()}</span>`}
       <div><div class="g-name">${p.name}${mine && html` <span class="muted">(you)</span>`}${!mine && G.level && G.reviews && html` <span class=${'lvl-tag lvl-' + G.level}>${G.level[0].toUpperCase() + G.level.slice(1)}</span>`}</div>
         <div class="g-prio">${prio ? 'priority' : ' '}</div></div>
     </div>
-    <button class=${'g-life' + (targetable ? ' target' : '') + (G.targeted?.has(`p${p.id}`) ? ' targeted' : '')}
-      title="Click to target this player" onClick=${() => act('player', { id: p.id })}>${p.life}</button>
+    <${Life} p=${p} targetable=${targetable} />
     <div class="g-chips">
       ${!mine && html`<span class="chip" title="Cards in hand">✋ ${p.handSize}</span>`}
       <span class="chip" title="Library">📚 ${p.library}</span>
@@ -229,7 +258,18 @@ function Lane({ s, me, action }) {
   const myTurn = s.activePlayer === me.id;
   const top = topOfStack(s);
   const holding = s.prompt.input === 'InputPassPriority' && s.prompt.okOn && s.holding;
+  const [sweep, setSweep] = useState(null);
+  const lastTurn = useRef(s.turn);
+  useEffect(() => { // a short banner when the turn passes
+    const changed = s.turn && s.turn !== lastTurn.current && !s.gameOver;
+    lastTurn.current = s.turn;
+    if (!changed) return;
+    setSweep({ id: s.turn, mine: myTurn, text: myTurn ? 'Your turn' : `${botName(s)}\u2019s turn` });
+    const t = setTimeout(() => setSweep(null), 1600);
+    return () => clearTimeout(t);
+  }, [s.turn]);
   return html`<div class="g-lane">
+    ${sweep && html`<div key=${sweep.id} class=${'turn-sweep' + (sweep.mine ? ' mine' : '')}><span>${sweep.text}</span></div>`}
     <div class="g-turninfo">
       <div class=${'g-turn ' + (myTurn ? 'mine' : 'theirs')}>
         ${s.gameOver ? `Game over · ${s.winner ? `${s.winner} wins` : 'draw'} in round ${s.round}`
@@ -280,8 +320,10 @@ function friendlyPrompt(s, me, ui) {
     if (myTurn && s.phaseKey === 'MAIN2') return { title: 'Second main phase', msg: 'Cast anything else, then end your turn.', ok: 'End turn' };
     // Any other step: you have priority in it (CR 117.3a). The bridge holds when you can act, else passes shortly.
     const step = `${myTurn ? 'Your' : `${botName(s)}'s`} ${stepName(s.phaseKey, s.phase)}`;
-    const options = [...new Set(mine.filter(anyPlayable).map((c) => c.name))];
-    if (s.holding && options.length) return { title: step, msg: `You have priority: respond with ${options.join(', ')}, or pass.`, ok: 'Pass priority', hideCancel: !myTurn };
+    const options = [...new Set(mine.filter((c) => c.playable && !(c.land && me.hand.includes(c))).map((c) => c.name))];
+    if (s.holding) { // the bridge is waiting for you: never claim it's passing
+      return { title: step, msg: options.length ? `You have priority: respond with ${options.join(', ')}, or pass.` : 'You have priority: respond with an instant or ability, or pass.', ok: 'Pass priority', hideCancel: !myTurn };
+    }
     return { title: step, msg: 'Nothing to respond with, passing priority…', ok: 'Pass priority', hideCancel: !myTurn, quiet: true };
   }
   if (/^InputPayMana/.test(p.input || '')) {
@@ -289,6 +331,7 @@ function friendlyPrompt(s, me, ui) {
   }
   if (p.input === 'InputAttack') return { title: 'Declare attackers', msg: `Click your creatures (gold = can attack) to attack ${botName(s)}, then confirm.`, ok: 'Confirm attack', extra: ['Attack with all', () => act('alpha')] };
   if (p.input === 'InputBlock') return { title: 'Declare blockers', msg: `${p.message} Click your creature (gold = can block) to block, or confirm with none to take the damage.`, ok: 'Confirm blocks' };
+  if (/discard/i.test(p.message) && /hand/i.test(p.message)) return { title: 'Discard down to hand size', msg: `${tidy(p.message).split(/\n/).pop()} Click the card(s) in your hand, then confirm.` };
   return { title: s.mulligan || p.input === 'InputConfirmMulligan' ? 'Opening hand' : 'Forge asks', msg: p.message };
 }
 

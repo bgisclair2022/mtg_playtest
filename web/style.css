@@ -108,6 +108,20 @@ main { flex: 1; min-height: 0; overflow: auto; animation: view-in .22s ease-out;
 .difficulty .blurb { font-size: 12px; color: #cfd3da; min-height: 16px; }
 .play-diff { max-width: 760px; margin-bottom: 14px; }
 
+/* ---- avatar ---- */
+.avatar { display: inline-grid; place-items: center; border-radius: 50%; background: var(--panel-2) center 25% / cover; color: var(--accent); font-weight: 700;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px #d9a44155; flex: none; }
+.chip-avatar { width: 22px; height: 22px; font-size: 11px; margin-right: 8px; vertical-align: middle; box-shadow: 0 0 0 1px var(--accent); }
+.user-chip { display: inline-flex; align-items: center; }
+.hero-avatar { width: 46px; height: 46px; font-size: 20px; margin-right: 14px; vertical-align: middle; }
+.avatar-search { width: 100%; margin-bottom: 12px; }
+.avatar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; min-height: 60px; }
+.avatar-opt { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px; border-radius: 12px; }
+.avatar-opt .av { width: 72px; height: 72px; border-radius: 50%; background: center 25% / cover; box-shadow: 0 0 0 2px var(--line); }
+.avatar-opt:hover .av, .avatar-opt.on .av { box-shadow: 0 0 0 2px var(--accent), 0 0 16px #d9a44166; }
+.avatar-opt small { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.3; }
+.modal-box.wide { width: min(760px, 94vw); }
+
 /* ---- deck picker ---- */
 .picker { position: relative; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .picker-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
