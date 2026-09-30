@@ -170,7 +170,7 @@ function PlayerBar({ p, s, onZone }) {
   return html`<div class=${'g-bar ' + (mine ? 'me' : 'opp') + (prio ? ' has-prio' : '')}>
     <div class="g-who">
       ${mine ? html`<span class="g-avatar you">${(p.name || '?')[0].toUpperCase()}</span>` : html`<img class="g-avatar" src="img/jace.png" alt="" />`}
-      <div><div class="g-name">${p.name}${mine && html` <span class="muted">(you)</span>`}</div>
+      <div><div class="g-name">${p.name}${mine && html` <span class="muted">(you)</span>`}${!mine && G.level && G.reviews && html` <span class=${'lvl-tag lvl-' + G.level}>${G.level[0].toUpperCase() + G.level.slice(1)}</span>`}</div>
         <div class="g-prio">${prio ? 'priority' : ' '}</div></div>
     </div>
     <button class=${'g-life' + (targetable ? ' target' : '') + (G.targeted?.has(`p${p.id}`) ? ' targeted' : '')}
@@ -571,7 +571,7 @@ function Game() {
   // Short questions and the main buttons sit beside your hand; card choices and the review get the dock's room.
   const bigAsk = s.ask && !compactAsk(s.ask);
   const bar = s.gameOver ? html`<div class="d-panel over-bar"><div class="d-title">${s.winner ? (me.name === s.winner ? '🏆 You win!' : `${s.winner} wins`) : 'Draw'}</div>
-        <div class="d-btns"><button onClick=${leaveGame}>Back to decks</button><button class="primary" onClick=${() => startGame(G.you, G.bot)}>Rematch</button></div></div>`
+        <div class="d-btns"><button onClick=${leaveGame}>Back to decks</button><button class="primary" onClick=${() => startGame(G.you, G.bot, G.level)}>Rematch</button></div></div>`
     : s.skip ? html`<div class="d-panel prompt quiet"><div class="d-title">${s.skip === 'myturn' ? 'Passing to your turn…' : 'Passing to the end of the turn…'}</div>
         <div class="d-msg">You'll still be asked about blocks and choices.</div>
         <div class="d-btns"><button class="primary" onClick=${() => act('skip', { value: 'stop' })}>Stop</button></div></div>`
@@ -579,7 +579,7 @@ function Game() {
     : s.ask ? html`<${AskPanel} key=${s.ask.id} a=${s.ask} s=${s} />`
     : deciding ? html`<${DecisionPanel} s=${s} />`
     : html`<${PromptPanel} s=${s} me=${me} opp=${opp} ui=${ui} />`;
-  const main = s.gameOver ? html`<${GameOver} s=${s} onLeave=${leaveGame} onRematch=${() => startGame(G.you, G.bot)} />`
+  const main = s.gameOver ? html`<${GameOver} s=${s} onLeave=${leaveGame} onRematch=${() => startGame(G.you, G.bot, G.level)} />`
     : bigAsk ? html`<${AskPanel} key=${s.ask.id} a=${s.ask} s=${s} />` : null;
   const wide = !!(ui.zone || (s.ask?.items?.some((it) => it.card) && s.ask.items.length > 4));
 
@@ -619,15 +619,15 @@ function Game() {
 
 // ---- lifecycle (called from app.js) ----
 const root = document.getElementById('view-game');
-async function startGame(you, bot) {
+async function startGame(you, bot, level) {
   G.running = false;
-  Object.assign(G, { you, bot, version: -1, tipsShown: false });
+  Object.assign(G, { you, bot, level, version: -1, tipsShown: false });
   artCache = null;
   root.hidden = false;
   render(null, root);
   render(html`<${Game} />`, root);
   try {
-    const r = await call('start_game', you, bot);
+    const r = await call('start_game', you, bot, level || null);
     Object.assign(G, { port: r.port, running: true, version: -1, reviews: r.reviews });
     poll(r.port);
   } catch {

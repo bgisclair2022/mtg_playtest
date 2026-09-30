@@ -64,7 +64,7 @@ class Api:
 
     # ---- in-app games (Forge engine + our board) ----
     @_safe
-    def start_game(self, you, bot):
+    def start_game(self, you, bot, level=None):
         self.stop_game()
         forge_dir = self._forge_dir()
         your_file, problems = self._export(you)
@@ -72,7 +72,9 @@ class Api:
         s = self._settings
         llm_env = {}
         if s.get("llm_backend"):  # advanced bot: the bridge runs llm.py for each plan
+            level = level if level in llm.difficulties() else llm.DEFAULT_DIFFICULTY
             llm_env = {"GOLDFISH_LLM": s["llm_backend"], "GOLDFISH_LLM_MODEL": s.get("llm_model", llm.DEFAULT_MODEL),
+                       "GOLDFISH_DIFFICULTY": level,
                        "GOLDFISH_PYTHON": sys.executable, "GOLDFISH_LLM_SCRIPT": os.path.abspath(llm.__file__)}
             if s.get("anthropic_api_key"):
                 llm_env["ANTHROPIC_API_KEY"] = s["anthropic_api_key"]
@@ -82,6 +84,7 @@ class Api:
             self._journal = os.path.join(journal_dir, time.strftime("%Y-%m-%d_%H%M%S") + ".jsonl")
             llm_env["GOLDFISH_JOURNAL"] = self._journal
         self._match = forge.Match(forge_dir, your_file, bot_file, s.get("username", ""), llm_env)
+        self._level = level if s.get("llm_backend") else None
         return {"port": self._match.port, "warnings": problems, "reviews": bool(s.get("llm_backend"))}
 
     @_safe
@@ -95,8 +98,11 @@ class Api:
         with urllib.request.urlopen(f"http://127.0.0.1:{self._match.port}/log", timeout=10) as r:
             log = json.load(r)  # grab it now, before a rematch closes the bridge
         winner = log.get("winner")
+        level = getattr(self, "_level", None)
         result = (f"{winner} won" if winner else "no winner (conceded or unfinished)") + f" in round {log.get('round')}. " \
-                 f"The bot is 'Jace'; the human is '{s.get('username') or 'You'}'."
+                 f"The bot is 'Jace'; the human is '{s.get('username') or 'You'}'." \
+                 + (f" Jace played at {llm.difficulty(level)['label']} difficulty; judge its choices against that "
+                    f"playstyle:\n{llm.difficulty(level)['style']}" if level else "")
         r = llm.review(result, log.get("lines", []), getattr(self, "_journal", None), s["llm_backend"],
                        s.get("llm_model", llm.DEFAULT_MODEL), s.get("anthropic_api_key"))
         return {k: r.get(k) for k in ("summary", "bot_decisions", "your_play", "report")}
@@ -194,6 +200,10 @@ class Api:
         self._save_settings()
         return self._settings["prefs"]
 
+    def open_difficulties(self):
+        """Open the folder of difficulty files (one .md per level) so they can be edited or added to."""
+        os.startfile(llm.DIFFICULTY_DIR)
+
     @_safe
     def check_deck(self, deck):
         return decks.resolve(deck)
@@ -227,6 +237,7 @@ class Api:
         return {**shown, "forge_ok": bool(forge.find_jar(d)), "java": forge.java_version(),
                 "deck_dir": forge.deck_dir(d) if d else None,
                 "llm_models": llm.MODELS, "llm_model": self._settings.get("llm_model", llm.DEFAULT_MODEL),
+                "difficulties": {k: {"label": v["label"], "blurb": v["blurb"]} for k, v in llm.difficulties().items()},
                 "llm_has_key": bool(self._settings.get("anthropic_api_key")), "claude_cli": llm.claude_exe(),
                 "anthropic_sdk": importlib.util.find_spec("anthropic") is not None}
 

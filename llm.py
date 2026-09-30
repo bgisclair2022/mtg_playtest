@@ -11,6 +11,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,37 @@ LESSONS_TEMPLATE = "# Bot lessons\n\nNothing learned yet. Lessons are added afte
 MODELS = {"claude-opus-5-5": "Opus 5.5 (smartest)", "claude-sonnet-5-5": "Sonnet 5.5 (balanced)",
           "claude-haiku-4-5": "Haiku 4.5 (fastest)"}
 DEFAULT_MODEL = "claude-opus-5-5"
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+DIFFICULTY_DIR = os.path.join(ROOT, "difficulties")
+DEFAULT_DIFFICULTY = "normal"
+
+
+def difficulties():
+    """Smarter Jace's difficulty levels, one Markdown file each in difficulties/ (e.g. 3-hard.md). The file name gives
+    the order and key, the front matter a label and whether past lessons are used, the first paragraph a one-line
+    description for the picker, and the whole body is added to Claude's instructions. Add a file to add a level."""
+    out = {}
+    for path in sorted(glob.glob(os.path.join(DIFFICULTY_DIR, "*.md"))):
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        key = re.sub(r"^\d+[-_ ]*", "", os.path.splitext(os.path.basename(path))[0]).lower()
+        meta, body = {}, text
+        m = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.S)
+        if m:
+            meta = dict(re.findall(r"^(\w+):\s*(.*?)\s*$", m[1], re.M))
+            body = text[m.end():]
+        blurb = next((ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith("#")), "")
+        out[key] = {"label": meta.get("label") or key.title(), "blurb": blurb, "style": body.strip()[:4000],
+                    "lessons": meta.get("lessons", "yes").lower() not in ("no", "false", "0"), "file": path}
+    return out
+
+
+def difficulty(name):
+    levels = difficulties()
+    return levels.get(name or "") or levels.get(DEFAULT_DIFFICULTY) or {"label": "Normal", "style": "", "lessons": True}
+
 
 SYSTEM = """You are the strategist for a Magic: The Gathering Commander bot playing 1v1 against a human.
 A rules engine plays the cards; you only set the plan. Cards are referred to by their numeric "id".
@@ -121,19 +152,23 @@ def lessons():
         return ""
 
 
-def _system(kind):
-    """The strategist prompt, plus everything learned so far (the review rewrites the lessons itself)."""
-    learned = lessons() if kind != "review" else ""
-    return SYSTEM + (f"\n\nLessons from your previous games (follow them unless the situation clearly differs):\n{learned}" if learned else "")
+def _system(kind, level=None):
+    """The strategist prompt at this difficulty, plus everything learned so far (the review rewrites the lessons itself)."""
+    if kind == "review":
+        return SYSTEM
+    d = difficulty(level)
+    learned = lessons() if d["lessons"] else ""
+    return (SYSTEM + (f"\n\nYour difficulty level is {d['label']}. Follow this playstyle:\n{d['style']}" if d["style"] else "")
+            + (f"\n\nLessons from your previous games (follow them unless the situation clearly differs):\n{learned}" if learned else ""))
 
 
-def _via_claude_code(kind, state, model):
+def _via_claude_code(kind, state, model, level=None):
     exe = claude_exe()
     if not exe:
         raise RuntimeError("Claude Code CLI not found. Install it or the Claude desktop app, then run `claude` once to log in.")
     out = subprocess.run(
         [exe, "-p", "--output-format", "json", "--model", model, "--tools", "", "--setting-sources", "",
-         "--strict-mcp-config", "--system-prompt", _system(kind), "--json-schema", json.dumps(SCHEMAS[kind])],
+         "--strict-mcp-config", "--system-prompt", _system(kind, level), "--json-schema", json.dumps(SCHEMAS[kind])],
         input=_prompt(kind, state), capture_output=True, text=True, encoding="utf-8", timeout=240 if kind == "review" else 90,
         cwd=tempfile.gettempdir(), creationflags=NO_WINDOW)
     reply = json.loads(out.stdout)
@@ -143,11 +178,11 @@ def _via_claude_code(kind, state, model):
     return plan if isinstance(plan, dict) else json.loads(reply["result"])
 
 
-def _via_api(kind, state, model, api_key):
+def _via_api(kind, state, model, api_key, level=None):
     import anthropic
     extra = {} if model.startswith("claude-haiku") else {"effort": "low"}  # effort isn't supported on Haiku 4.5
     response = anthropic.Anthropic(api_key=api_key or None, timeout=240 if kind == "review" else 90).messages.create(
-        model=model, max_tokens=16000 if kind == "review" else 4000, system=_system(kind),
+        model=model, max_tokens=16000 if kind == "review" else 4000, system=_system(kind, level),
         messages=[{"role": "user", "content": _prompt(kind, state)}],
         output_config={"format": {"type": "json_schema", "schema": SCHEMAS[kind]}, **extra})
     if response.stop_reason != "end_turn":
@@ -155,11 +190,11 @@ def _via_api(kind, state, model, api_key):
     return json.loads(next(b.text for b in response.content if b.type == "text"))
 
 
-def plan(kind, state, backend, model=DEFAULT_MODEL, api_key=None):
-    model = model if model in MODELS else DEFAULT_MODEL
+def plan(kind, state, backend, model=DEFAULT_MODEL, api_key=None, level=None):
+    model = model if model in MODELS else DEFAULT_MODEL  # difficulty never changes the model (or its cost)
     if backend == "api":
-        return _via_api(kind, state, model, api_key)
-    return _via_claude_code(kind, state, model)
+        return _via_api(kind, state, model, api_key, level)
+    return _via_claude_code(kind, state, model, level)
 
 
 def review(result, log, journal_path, backend, model=DEFAULT_MODEL, api_key=None):
@@ -207,7 +242,7 @@ def main():
     try:
         req = json.load(sys.stdin)
         result = plan(req["kind"], req["state"], os.environ.get("GOLDFISH_LLM"), os.environ.get("GOLDFISH_LLM_MODEL"),
-                      os.environ.get("ANTHROPIC_API_KEY"))
+                      os.environ.get("ANTHROPIC_API_KEY"), os.environ.get("GOLDFISH_DIFFICULTY"))
         _journal(req["kind"], req["state"], result)
     except Exception as e:  # noqa: BLE001 - the bot falls back to Forge's AI
         print(f"llm: {type(e).__name__}: {e}", file=sys.stderr)

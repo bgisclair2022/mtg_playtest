@@ -39,6 +39,21 @@ function DeckPicker({ label, decks, value, onChange, art }) {
   </div>`;
 }
 
+// ---- Smarter Jace difficulty (only when Claude is connected) ----
+function Difficulty({ settings, value, onChange, go }) {
+  if (!settings) return null;
+  if (!settings.llm_backend) {
+    return html`<div class="difficulty off">Jace: Forge AI · <a href="#" onClick=${(e) => { e.preventDefault(); go('settings'); }}>connect Claude</a> for Smarter Jace and difficulty levels</div>`;
+  }
+  const levels = settings.difficulties || {};
+  const cur = levels[value] || levels.normal;
+  return html`<div class="difficulty" data-tour="difficulty">
+    <span class="picker-label">Smarter Jace difficulty</span>
+    <div class="seg">${Object.entries(levels).map(([k, d]) => html`<button class=${'lvl-' + k + (value === k ? ' on' : '')} onClick=${() => onChange(k)}>${d.label}</button>`)}</div>
+    <div class="blurb">${cur?.blurb}</div>
+  </div>`;
+}
+
 // ---- home ----
 function DeckTile({ d, art, onOpen, onPlay }) {
   const img = art[commanderNames(d)[0]];
@@ -51,7 +66,7 @@ function DeckTile({ d, art, onOpen, onPlay }) {
   </div>`;
 }
 
-function Home({ decks, match, setMatch, art, settings, user, go, onPlay, openDeck, onTour }) {
+function Home({ decks, match, setMatch, art, settings, user, go, onPlay, openDeck, onTour, level, setLevel }) {
   const you = decks.find((d) => sameRef(d, match.you)), bot = decks.find((d) => sameRef(d, match.bot));
   const heroImg = art[commanderNames(you)[0]] || art[commanderNames(bot)[0]];
   const mine = decks.filter((d) => !d.preset), presets = decks.filter((d) => d.preset);
@@ -68,6 +83,7 @@ function Home({ decks, match, setMatch, art, settings, user, go, onPlay, openDec
           <${DeckPicker} label="Your deck" decks=${decks} value=${match.you} art=${art} onChange=${(r) => setMatch({ ...match, you: r })} />
           <div class="vs">vs</div>
           <${DeckPicker} label="Jace's deck" decks=${decks} value=${match.bot} art=${art} onChange=${(r) => setMatch({ ...match, bot: r })} />
+          <${Difficulty} settings=${settings} value=${level} onChange=${setLevel} go=${go} />
           <button class="primary big" data-tour="play-cta" disabled=${!you || !bot} onClick=${onPlay}>▶ Play vs Jace</button>
           <div class="hero-links"><a href="#" onClick=${(e) => { e.preventDefault(); go('play'); }}>Simulate this matchup</a></div>
         </div>
@@ -94,7 +110,7 @@ function Home({ decks, match, setMatch, art, settings, user, go, onPlay, openDec
 }
 
 // ---- play: matchup, Forge, simulations ----
-function Play({ decks, match, setMatch, art, onPlay }) {
+function Play({ decks, match, setMatch, art, onPlay, settings, level, setLevel, go }) {
   const [games, setGames] = useState(10);
   const [sim, setSim] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -111,6 +127,7 @@ function Play({ decks, match, setMatch, art, onPlay }) {
         <div class="vs">vs</div>
         <${DeckPicker} label="Jace's deck" decks=${decks} value=${match.bot} art=${art} onChange=${(r) => setMatch({ ...match, bot: r })} />
       </div>
+      <div class="play-diff"><${Difficulty} settings=${settings} value=${level} onChange=${setLevel} go=${go} /></div>
       <div class="row">
         <button class="primary big" disabled=${!ok} onClick=${onPlay}>▶ Play vs Jace</button>
         <button disabled=${!ok} onClick=${async () => { const r = await call('play_in_forge', match.you, match.bot); setMsg(r.warnings); }}>Open in Forge instead</button>
@@ -185,6 +202,7 @@ function Settings({ settings, reload, user, onName, onTour }) {
     <div class="panel">
       <h2>Smarter Jace <span class="muted">Claude</span></h2>
       <p class="muted">Claude reads the game once per Jace turn (and at the mulligan) and tells Forge's AI what to cast, what to hold and how to attack. It also decides whether to answer your spells, and reviews each game to update <code>data/bot-lessons.md</code>. If Claude is slow or fails, Jace plays as usual. Simulations don't use it.</p>
+      <p class="muted">Once connected, pick a <b>difficulty</b> before each match on Home or Play. Each level is a Markdown file in <code>difficulties/</code> describing how Jace should play; edit them, or add a new <code>.md</code> to add a level. Difficulty never changes the model below, so it costs the same.</p>
       <div class="row">
         <select value=${backend} onChange=${(e) => setBackend(e.target.value)}>
           <option value="">Off (Forge AI only)</option>
@@ -197,7 +215,7 @@ function Settings({ settings, reload, user, onName, onTour }) {
       </div>
       <p class="muted">${backend === 'claude-code' ? (s.claude_cli ? html`Uses <code>${s.claude_cli}</code>. If Jace never shows a plan, run <code>claude</code> once in a terminal to log in.` : html`<span class="bad">Claude Code CLI not found.</span> Install Claude Code or the Claude desktop app.`)
         : backend === 'api' ? (s.anthropic_sdk ? 'Billed per token to your key.' : html`<span class="bad">Run setup.bat again to install the anthropic package.</span>`) : ''}</p>
-      <div class="row"><button onClick=${() => api.open_lessons()}>Open Jace's lessons file</button></div>
+      <div class="row"><button onClick=${() => api.open_lessons()}>Open Jace's lessons file</button><button onClick=${() => api.open_difficulties()}>Open difficulty files</button></div>
     </div>
     <div class="panel">
       <h2>You & the guide</h2>
@@ -234,6 +252,7 @@ function App() {
   const [art, setArt] = useState({});
   const [naming, setNaming] = useState(null); // 'first' | 'change'
   const [touring, setTouring] = useState(false);
+  const [level, setLevelState] = useState('normal');
   const reload = async () => setSettings(await call('settings'));
 
   useEffect(() => {
@@ -241,6 +260,7 @@ function App() {
       await ready;
       const [list, s] = await Promise.all([call('list_decks'), call('settings')]);
       await loadPrefs();
+      if (prefs.difficulty) setLevelState(prefs.difficulty);
       setDecks(list); setSettings(s); setUser(s.username || '');
       const valid = (r) => r && list.some((d) => sameRef(d, r));
       const lm = prefs.lastMatch || {};
@@ -255,9 +275,10 @@ function App() {
   useEffect(() => { cardImages(decks.map((d) => commanderNames(d)[0])).then(setArt); }, [decks]);
 
   const setMatch = (m) => { setMatchState(m); setPref('lastMatch', m); };
+  const setLevel = (l) => { setLevelState(l); setPref('difficulty', l); };
   const go = (v) => { setView(v); document.getElementById('preview').hidden = true; };
   const openDeck = (ref) => { setSelected(ref); go('decks'); };
-  const play = () => { if (match.you && match.bot) { setPref('lastMatch', match); window.startGame(match.you, match.bot); } };
+  const play = () => { if (match.you && match.bot) { setPref('lastMatch', match); window.startGame(match.you, match.bot, settings?.llm_backend ? level : null); } };
   const playWith = (ref, as) => { const m = { ...match, [as]: ref }; setMatch(m); go('home'); toast(as === 'bot' ? `Jace's deck: ${ref.name}` : `Your deck: ${ref.name}`); };
   const endTour = () => { setTouring(false); setPref('tourDone', true); };
 
@@ -285,9 +306,9 @@ function App() {
     </header>
     <main key=${view}>
       ${view === 'home' && html`<${Home} decks=${decks} match=${match} setMatch=${setMatch} art=${art} settings=${settings} user=${user} go=${go}
-        onPlay=${play} openDeck=${openDeck} onTour=${() => setTouring(true)} />`}
+        onPlay=${play} openDeck=${openDeck} onTour=${() => setTouring(true)} level=${level} setLevel=${setLevel} />`}
       ${view === 'decks' && html`<${DecksView} decks=${decks} setDecks=${setDecks} selected=${decksSel} setSelected=${setSelected} onPlay=${playWith} />`}
-      ${view === 'play' && html`<${Play} decks=${decks} match=${match} setMatch=${setMatch} art=${art} onPlay=${play} />`}
+      ${view === 'play' && html`<${Play} decks=${decks} match=${match} setMatch=${setMatch} art=${art} onPlay=${play} settings=${settings} level=${level} setLevel=${setLevel} go=${go} />`}
       ${view === 'settings' && html`<${Settings} settings=${settings} reload=${reload} user=${user} onName=${() => setNaming('change')} onTour=${() => setTouring(true)} />`}
       ${view === 'help' && html`<${HelpView} onTour=${() => setTouring(true)} onBoardTips=${() => { setPref('boardTipsDone', false); toast('Board tips will show at the start of your next game.'); }} />`}
     </main>

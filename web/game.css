@@ -173,6 +173,9 @@ button.chip { cursor: pointer; }
 .d-review ul { margin: 0; padding-left: 18px; }
 .d-review li { margin: 4px 0; }
 
+.lvl-tag { font-size: 10px; font-weight: 700; border-radius: 999px; padding: 1px 7px; margin-left: 4px; color: #1a1a1a; vertical-align: middle; }
+.lvl-tag.lvl-easy { background: var(--ok); } .lvl-tag.lvl-normal { background: var(--U); } .lvl-tag.lvl-hard { background: var(--accent); } .lvl-tag.lvl-expert { background: var(--danger); }
+
 /* ---- game over: the board stays visible to look at, but is clearly finished ---- */
 .g-wrap.over .g-board { filter: saturate(.55) brightness(.85); transition: filter .6s; }
 .g-wrap.over .g-board .gc { animation: none; cursor: default; box-shadow: 0 2px 6px #0009; }

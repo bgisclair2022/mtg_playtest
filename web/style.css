@@ -96,6 +96,18 @@ main { flex: 1; min-height: 0; overflow: auto; animation: view-in .22s ease-out;
 .mini-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
 .mini-tags i { font-style: normal; font-size: 10px; background: var(--panel-2); border-radius: 999px; padding: 0 7px; color: var(--muted); }
 
+/* ---- difficulty ---- */
+.difficulty { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+.difficulty.off { font-size: 12px; color: var(--muted); text-align: center; }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.seg button { border: none; background: none; padding: 7px 4px; border-radius: 7px; color: var(--muted); font-weight: 600; font-size: 13px; }
+.seg button:hover:not(.on) { color: var(--text); background: var(--panel-2); }
+.seg button.on { color: #1a1a1a; }
+.seg .lvl-easy.on { background: var(--ok); } .seg .lvl-normal.on { background: var(--U); }
+.seg .lvl-hard.on { background: var(--accent); } .seg .lvl-expert.on { background: var(--danger); }
+.difficulty .blurb { font-size: 12px; color: #cfd3da; min-height: 16px; }
+.play-diff { max-width: 760px; margin-bottom: 14px; }
+
 /* ---- deck picker ---- */
 .picker { position: relative; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .picker-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
