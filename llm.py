@@ -21,10 +21,13 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 LESSONS_FILE = os.path.join(ROOT, "data", "bot-lessons.md")  # what the bot has learned; rewritten after each reviewed game
 REVIEWS_DIR = os.path.join(ROOT, "data", "reviews")
 LESSONS_TEMPLATE = "# Bot lessons\n\nNothing learned yet. Lessons are added after each reviewed game.\n"
+# Shipped starting point, learned from simulated games between the preset decks; used until you have your own file.
+BASE_LESSONS = os.path.join(ROOT, "presets", "bot-lessons.md")
 
 MODELS = {"claude-opus-5-5": "Opus 5.5 (smartest)", "claude-sonnet-5-5": "Sonnet 5.5 (balanced)",
           "claude-haiku-4-5": "Haiku 4.5 (fastest)"}
 DEFAULT_MODEL = "claude-opus-5-5"
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DIFFICULTY_DIR = os.path.join(ROOT, "difficulties")
 DEFAULT_DIFFICULTY = "normal"
 
@@ -145,11 +148,22 @@ def claude_exe():
 
 
 def lessons():
+    for path in (LESSONS_FILE, BASE_LESSONS):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()[:8000]
+        except OSError:
+            pass
+    return ""
+
+
+def starting_lessons():
+    """What a new lessons file starts from: the shipped base lessons if present, else an empty template."""
     try:
-        with open(LESSONS_FILE, encoding="utf-8") as f:
-            return f.read()[:8000]
+        with open(BASE_LESSONS, encoding="utf-8") as f:
+            return f.read()
     except OSError:
-        return ""
+        return LESSONS_TEMPLATE
 
 
 def _system(kind, level=None):

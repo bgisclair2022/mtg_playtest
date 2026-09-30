@@ -111,7 +111,7 @@ class Api:
         if not os.path.exists(llm.LESSONS_FILE):
             os.makedirs(os.path.dirname(llm.LESSONS_FILE), exist_ok=True)
             with open(llm.LESSONS_FILE, "w", encoding="utf-8") as f:
-                f.write(llm.LESSONS_TEMPLATE)
+                f.write(llm.starting_lessons())
         os.startfile(llm.LESSONS_FILE)
 
     def open_file(self, path):
