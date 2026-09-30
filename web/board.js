@@ -164,11 +164,12 @@ function PlayerBar({ p, s, onZone }) {
   const targetable = p.highlighted || (/^InputSelect(Targets|Entities)/.test(s.prompt.input || '') && /player|opponent|any target/i.test(s.prompt.message));
   const hot = (zone) => p[zone].some((c) => c.playable || c.selectable);
   const pool = Object.entries(p.mana);
-  return html`<div class=${'g-bar ' + (mine ? 'me' : 'opp') + (p.priority ? ' has-prio' : '')}>
+  const prio = p.priority && !s.gameOver;
+  return html`<div class=${'g-bar ' + (mine ? 'me' : 'opp') + (prio ? ' has-prio' : '')}>
     <div class="g-who">
       ${mine ? html`<span class="g-avatar you">${(p.name || '?')[0].toUpperCase()}</span>` : html`<img class="g-avatar" src="img/jace.png" alt="" />`}
       <div><div class="g-name">${p.name}${mine && html` <span class="muted">(you)</span>`}</div>
-        <div class="g-prio">${p.priority ? 'priority' : ' '}</div></div>
+        <div class="g-prio">${prio ? 'priority' : ' '}</div></div>
     </div>
     <button class=${'g-life' + (targetable ? ' target' : '') + (G.targeted?.has(`p${p.id}`) ? ' targeted' : '')}
       title="Click to target this player" onClick=${() => act('player', { id: p.id })}>${p.life}</button>
@@ -206,9 +207,10 @@ function Lane({ s, me, action }) {
   return html`<div class="g-lane">
     <div class="g-turninfo">
       <div class=${'g-turn ' + (myTurn ? 'mine' : 'theirs')}>
-        ${s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : `${botName(s)}'s`} turn`}
+        ${s.gameOver ? `Game over · ${s.winner ? `${s.winner} wins` : 'draw'} in round ${s.round}`
+          : s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : `${botName(s)}'s`} turn`}
         ${s.dayNight === 'day' ? ' · ☀ Day' : s.dayNight === 'night' ? ' · ☾ Night' : ''}</div>
-      <div class="g-phases">${PHASES.map(([label, keys]) => html`<span class=${keys.includes(s.phaseKey) ? 'on' : ''}>${label}</span>`)}</div>
+      <div class="g-phases">${PHASES.map(([label, keys]) => html`<span class=${!s.gameOver && keys.includes(s.phaseKey) ? 'on' : ''}>${label}</span>`)}</div>
     </div>
     <div class="g-stack">
       ${s.stack.length ? [...s.stack].sort((a, b) => (b === top) - (a === top)).map((it) => html`<div key=${it.id} class=${'st' + (it.trigger ? ' trigger' : '') + (it === top ? ' top' : '') + (it.mine ? ' mine' : '')}>
@@ -503,7 +505,7 @@ function Game() {
   useEffect(() => {
     const key = (e) => {
       const p = G.last?.prompt;
-      if (!p || G.last.ask || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      if (!p || G.last.ask || G.last.gameOver || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       if ((e.key === ' ' || e.key === 'Enter') && p.okOn) { e.preventDefault(); act('ok'); }
       if (e.key === 'Escape' && p.cancelOn) act('cancel');
     };
@@ -534,7 +536,7 @@ function Game() {
     : html`<${PromptPanel} s=${s} me=${me} opp=${opp} ui=${ui} />`;
   const wide = !!(ui.zone || (s.ask?.items?.some((it) => it.card) && s.ask.items.length > 4));
 
-  return html`<div class=${'g-wrap' + (wide ? ' wide' : '')}>
+  return html`<div class=${'g-wrap' + (wide ? ' wide' : '') + (s.gameOver ? ' over' : '')}>
     <div class="g-board">
       <${PlayerBar} p=${opp} s=${s} onZone=${(p, z) => ui.set({ zone: { player: p.id, zone: z } })} />
       <${Battlefield} p=${opp} s=${s} blocks=${blocks} />
@@ -556,7 +558,7 @@ function Game() {
         }}>${SPEEDS.map(([v, l]) => html`<option value=${v}>${l}</option>`)}</select></label>
         <label class="check"><input type="checkbox" checked=${s.autoPass} onChange=${(e) => act('autopass', { value: e.target.checked })} /> Auto-pass steps where I have nothing to play</label>
         <label class="check"><input type="checkbox" checked=${s.autoPay} onChange=${(e) => act('autopay', { value: e.target.checked })} /> Auto-pay mana (untick to choose lands)</label>
-        <div class="d-btns"><button class="danger" onClick=${() => confirm('Concede this game?') && act('concede')}>Concede</button><button onClick=${leaveGame}>Leave game</button></div>
+        <div class="d-btns">${!s.gameOver && html`<button class="danger" onClick=${() => confirm('Concede this game?') && act('concede')}>Concede</button>`}<button onClick=${leaveGame}>Leave game</button></div>
       </div>
     </aside>
     <${Toasts} notices=${s.notices} />

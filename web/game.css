@@ -157,6 +157,12 @@ button.chip { cursor: pointer; }
 .d-review ul { margin: 0; padding-left: 18px; }
 .d-review li { margin: 4px 0; }
 
+/* ---- game over: the board stays visible to look at, but is clearly finished ---- */
+.g-wrap.over .g-board { filter: saturate(.55) brightness(.85); transition: filter .6s; }
+.g-wrap.over .g-board .gc { animation: none; cursor: default; box-shadow: 0 2px 6px #0009; }
+.g-wrap.over .g-board .gc-slot.attacking { transform: none; }
+.g-wrap.over .g-turn { color: var(--accent); }
+
 /* ---- toasts, preview ---- */
 .g-toasts { position: absolute; top: 12px; left: calc((100% - 340px) / 2); transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px;
   z-index: 70; pointer-events: none; }

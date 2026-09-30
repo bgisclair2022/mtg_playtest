@@ -113,6 +113,8 @@ public final class Bridge {
         // Off: Forge's highlight refresh evaluates abilities on the Swing thread, racing the AI (crashes). The bridge
         // computes the same things itself on the game thread (WebGui.onInputChanged).
         prefs.setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, "false");
+        // One game per match: otherwise Forge treats it as game 1 of a best-of-3 and the match isn't over when you win or lose.
+        prefs.setPref(FPref.UI_MATCHES_PER_GAME, "1");
 
         final Deck yours = DeckSerializer.fromFile(new File(args[1]));
         final Deck bots = DeckSerializer.fromFile(new File(args[2]));
@@ -504,7 +506,9 @@ public final class Bridge {
         private String inputName() {
             final IGameController c = getGameController();
             if (c instanceof PlayerControllerHuman pch && pch.getInputQueue().getInput() != null) {
-                return pch.getInputQueue().getInput().getClass().getSimpleName();
+                final Class<?> k = pch.getInputQueue().getInput().getClass();
+                // anonymous inputs (e.g. discarding to hand size) report their parent, like InputSelectCardsFromList
+                return k.isAnonymousClass() ? k.getSuperclass().getSimpleName() : k.getSimpleName();
             }
             return null;
         }
@@ -516,7 +520,12 @@ public final class Bridge {
             if (c == null) {
                 return;
             }
-            switch (a.get("type").getAsString()) {
+            final String type = a.get("type").getAsString();
+            final GameView over = getGameView();
+            if (over != null && over.isGameOver() && !java.util.Set.of("speed", "autopass", "autopay").contains(type)) {
+                return; // the game is finished: nothing on the board acts any more
+            }
+            switch (type) {
                 case "ok" -> c.selectButtonOk();
                 case "cancel" -> c.selectButtonCancel();
                 case "card" -> {
@@ -750,9 +759,10 @@ public final class Bridge {
             }
             o.add("stack", stack);
 
-            final JsonArray combat = new JsonArray();
+            JsonArray combat = liveCombat(gv);
             final CombatView cv = gv.getCombat();
-            if (cv != null) {
+            if (combat == null && cv != null) {
+                combat = new JsonArray();
                 for (CardView attacker : cv.getAttackers()) {
                     final JsonObject a = new JsonObject();
                     a.addProperty("attacker", attacker.getId());
@@ -767,7 +777,7 @@ public final class Bridge {
                     combat.add(a);
                 }
             }
-            o.add("combat", combat);
+            o.add("combat", combat == null ? new JsonArray() : combat);
 
             final JsonArray log = new JsonArray();
             if (gv.getGameLog() != null) {
@@ -865,6 +875,33 @@ public final class Bridge {
                 }
             }
             return out;
+        }
+
+        /** Attackers and blockers from the live combat. Forge only copies blocks into the CombatView once they're
+         *  confirmed, so without this the board wouldn't show a block while you're still declaring it. */
+        private static JsonArray liveCombat(GameView gv) {
+            try {
+                final forge.game.combat.Combat combat = gv.getGame().getCombat();
+                if (combat == null) {
+                    return null;
+                }
+                final JsonArray out = new JsonArray();
+                for (Card attacker : new ArrayList<>(combat.getAttackers())) {
+                    final JsonObject a = new JsonObject();
+                    a.addProperty("attacker", attacker.getId());
+                    final forge.game.GameEntity d = combat.getDefenderByAttacker(attacker);
+                    a.addProperty("defender", d == null ? "" : d.getName());
+                    final JsonArray bs = new JsonArray();
+                    for (Card b : new ArrayList<>(combat.getBlockers(attacker))) {
+                        bs.add(b.getId());
+                    }
+                    a.add("blockers", bs);
+                    out.add(a);
+                }
+                return out;
+            } catch (RuntimeException e) { // being changed on the game thread right now; the view will do
+                return null;
+            }
         }
 
         /** Your creatures that could attack (your declare-attackers) or block (their attack). */
