@@ -108,3 +108,39 @@ def lookup(names):
     if missing:
         _save()
     return {n.lower(): cache[n.lower()] for n in names if n.lower() in cache}, not_found
+
+
+def autocomplete(q):
+    """Card names matching q (Scryfall's autocomplete, up to 20)."""
+    if len(q.strip()) < 2:
+        return []
+    res = _request("/cards/autocomplete?" + urllib.parse.urlencode({"q": q.strip()}))
+    return (res or {}).get("data", [])
+
+
+GC_FILE = os.path.join(ROOT, "data", "game-changers.json")
+
+
+def game_changers(max_age_days=14):
+    """Names on the Commander Game Changers list (for bracket estimates), cached for two weeks."""
+    try:
+        if time.time() - os.path.getmtime(GC_FILE) < max_age_days * 86400:
+            with open(GC_FILE, encoding="utf-8") as f:
+                return set(json.load(f))
+    except (OSError, ValueError):
+        pass
+    names, path = [], "/cards/search?" + urllib.parse.urlencode({"q": "is:gamechanger", "unique": "cards"})
+    try:
+        while path:
+            res = _request(path)
+            names += [c["name"] for c in res.get("data", [])]
+            path = res["next_page"].replace(API, "") if res.get("has_more") else None
+    except (OSError, ValueError, KeyError):
+        if os.path.exists(GC_FILE):  # offline: an old list beats none
+            with open(GC_FILE, encoding="utf-8") as f:
+                return set(json.load(f))
+        return set()
+    os.makedirs(os.path.dirname(GC_FILE), exist_ok=True)
+    with open(GC_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(names), f)
+    return set(names)

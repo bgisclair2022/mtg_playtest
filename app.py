@@ -157,6 +157,44 @@ class Api:
         return decks.list_all()
 
     @_safe
+    def rename_deck(self, old, new):
+        new = " ".join(str(new).split())
+        if not new:
+            raise ValueError("Give the deck a name.")
+        if new.lower() != old.lower() and any(d["name"].lower() == new.lower() and not d["preset"] for d in decks.list_all()):
+            raise ValueError(f'You already have a deck called "{new}".')
+        deck = decks.load(old)
+        decks.save({**deck, "name": new})
+        if decks._slug(new) != decks._slug(old):
+            decks.delete(old)
+        return decks.list_all()
+
+    @_safe
+    def duplicate_deck(self, name, preset):
+        deck = decks.load(name, preset)
+        mine = {d["name"].lower() for d in decks.list_all() if not d["preset"]}
+        base = deck["name"] if preset else f"{deck['name']} (copy)"
+        new, i = base, 2
+        while new.lower() in mine:
+            new, i = f"{base} {i}", i + 1
+        deck = {**deck, "name": new}
+        deck.pop("description", None)
+        decks.save(deck)
+        return {"name": new, "decks": decks.list_all()}
+
+    @_safe
+    def card_search(self, q):
+        return scryfall.autocomplete(q)
+
+    @_safe
+    def set_pref(self, key, value):
+        """Small UI preferences (seen the tour, last matchup, bot speed). The window runs in private mode, so
+        browser storage doesn't survive a restart; these live in data/settings.json instead."""
+        self._settings.setdefault("prefs", {})[str(key)] = value
+        self._save_settings()
+        return self._settings["prefs"]
+
+    @_safe
     def check_deck(self, deck):
         return decks.resolve(deck)
 

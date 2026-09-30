@@ -4,131 +4,16 @@
 <meta charset="utf-8">
 <title>MTG Goldfish</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="game.css">
 </head>
 <body>
 <div id="splash"><img src="img/icon.png" alt=""><h1>MTG Goldfish</h1><div class="spinner"></div></div>
-<header>
-  <h1>MTG Goldfish</h1>
-  <nav>
-    <button class="tab active" data-view="decks">Decks</button>
-    <button class="tab" data-view="test">Test vs Jace</button>
-    <button class="tab" data-view="settings">Settings</button>
-  </nav>
-  <button id="user-chip" class="user-chip" title="Change your name" hidden></button>
-</header>
-
-<main>
-  <!-- Decks -->
-  <section id="view-decks" class="view">
-    <aside class="deck-list">
-      <div class="row">
-        <button id="new-deck">+ New</button>
-        <button id="open-moxfield">Import from Moxfield</button>
-      </div>
-      <h3>My decks</h3>
-      <ul id="my-decks"></ul>
-      <h3>Preset decks for Jace</h3>
-      <ul id="preset-decks"></ul>
-    </aside>
-
-    <div class="editor">
-      <div class="row">
-        <input id="deck-name" placeholder="Deck name">
-        <input id="deck-commander" placeholder="Commander(s), one per line or separated by ;">
-        <input id="deck-companion" placeholder="Companion (optional, outside the 100)">
-      </div>
-      <textarea id="deck-list" spellcheck="false" placeholder="Paste a decklist, e.g.&#10;1 Sol Ring&#10;1 Arcane Signet&#10;35 Forest&#10;&#10;Moxfield, Arena and MTGO exports all work. Mark the commander with a 'Commander' section header or *CMDR*, or type it above."></textarea>
-      <div class="row">
-        <button id="check-deck" class="primary">Check with Scryfall</button>
-        <button id="save-deck">Save</button>
-        <button id="delete-deck" class="danger">Delete</button>
-        <span id="deck-source" class="muted"></span>
-      </div>
-      <div id="deck-report"></div>
-    </div>
-  </section>
-
-  <!-- Test -->
-  <section id="view-test" class="view" hidden>
-    <div class="panel">
-      <h2>Matchup</h2>
-      <div class="matchup">
-        <label>Your deck<select id="you-deck"></select></label>
-        <span class="vs">vs</span>
-        <label>Jace's deck<select id="bot-deck"></select></label>
-      </div>
-      <div class="row">
-        <button id="play-game" class="primary">Play vs Jace</button>
-        <span class="muted">Plays right here on Forge's full rules engine against Jace (its AI). His turns run automatically.</span>
-      </div>
-      <div class="row">
-        <button id="play-forge">Open in Forge instead</button>
-        <span class="muted">Exports both decks to Forge's own app (Commander → pick decks, opponent = AI).</span>
-      </div>
-      <div id="play-msg"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Simulate (Forge AI vs Forge AI)</h2>
-      <div class="row">
-        <label class="inline">Games <input id="sim-games" type="number" min="1" max="200" value="10"></label>
-        <button id="start-sim" class="primary">Run simulation</button>
-        <button id="cancel-sim" class="danger" hidden>Cancel</button>
-        <span class="muted">Forge pilots both decks with its full-rules AI, headless. Each game takes roughly 10–60 seconds.</span>
-      </div>
-      <div id="sim-out"></div>
-    </div>
-  </section>
-
-  <!-- Settings -->
-  <section id="view-settings" class="view" hidden>
-    <div class="panel">
-      <h2>Forge</h2>
-      <div id="forge-status"></div>
-      <div class="row">
-        <input id="forge-dir" placeholder="Folder containing forge-gui-desktop-…-jar-with-dependencies.jar">
-        <button id="set-forge">Use this folder</button>
-        <button id="browse-forge">Browse…</button>
-      </div>
-      <div class="row">
-        <button id="install-forge" class="primary">Download &amp; install Forge</button>
-        <span class="muted">Gets the latest release (about 300 MB) from
-          <a href="#" data-url="https://github.com/Card-Forge/forge/releases/latest">Forge's GitHub</a> into <code>%USERPROFILE%\Forge</code>.
-          Forge needs <a href="#" data-url="https://adoptium.net/">Java 17+</a>.</span>
-      </div>
-      <div id="install-out"></div>
-    </div>
-    <div class="panel">
-      <h2>Smarter Jace (Claude)</h2>
-      <p class="muted">Once per turn of Jace's, and at its mulligan, Claude reads the game and tells Forge's AI what to cast first,
-        what to hold back and how to attack. Forge still plays the cards; if Claude is slow or fails, Jace plays as usual.
-        Only in-app games use it, not simulations.</p>
-      <div class="row">
-        <select id="llm-backend">
-          <option value="">Off (Forge AI only)</option>
-          <option value="claude-code">Claude Code (your Claude subscription)</option>
-          <option value="api">Claude API key (pay per use)</option>
-        </select>
-        <select id="llm-model"></select>
-        <input id="llm-key" type="password" placeholder="API key (sk-ant-…); blank uses ANTHROPIC_API_KEY">
-        <button id="set-llm">Save</button>
-      </div>
-      <div id="llm-status" class="muted"></div>
-      <p class="muted">It also decides whether to answer your spells, and learns: after each game Claude reviews the log,
-        grades Jace's choices and rewrites <code>data/bot-lessons.md</code>, which every later decision reads.</p>
-      <div class="row"><button id="open-lessons">Open lessons file</button></div>
-    </div>
-  </section>
-</main>
-
+<div id="app"></div>
 <!-- In-app game (Forge engine via bridge), rendered by board.js -->
 <section id="view-game" hidden></section>
 <div id="g-preview" hidden></div>
-
-<div id="modal" hidden><div class="modal-box"></div></div>
 <div id="preview" hidden></div>
-<link rel="stylesheet" href="game.css">
-<script src="app.js"></script>
 <script type="module" src="board.js"></script>
+<script type="module" src="main.js"></script>
 </body>
 </html>

@@ -78,8 +78,11 @@ def list_all():
             for f in sorted(os.listdir(folder)):
                 if f.endswith(".json"):
                     d = _read(os.path.join(folder, f))
-                    out.append({"name": d["name"], "commander": d.get("commander", ""), "preset": preset,
-                                "description": d.get("description", "")})
+                    cmd, cards = _commander_names(d)
+                    out.append({"name": d["name"], "commander": d.get("commander", "") or "\n".join(cmd), "preset": preset,
+                                "description": d.get("description", ""), "tags": d.get("tags", []),
+                                "count": len(cmd) + sum(c for c, _ in cards), "source": d.get("source", ""),
+                                "modified": os.path.getmtime(os.path.join(folder, f))})
     return out
 
 
@@ -92,6 +95,7 @@ def save(deck):
         raise ValueError("Give the deck a name first.")
     os.makedirs(SAVE_DIR, exist_ok=True)
     keep = {k: deck.get(k, "") for k in ("name", "commander", "companion", "list", "source")}
+    keep["tags"] = [t.strip() for t in deck.get("tags") or [] if t.strip()][:8]
     with open(os.path.join(SAVE_DIR, _slug(deck["name"]) + ".json"), "w", encoding="utf-8") as f:
         json.dump(keep, f, indent=2)
 
@@ -153,12 +157,66 @@ def resolve(deck):
     spells = sum(curve)
     avg = sum(i * n for i, n in enumerate(curve)) / spells if spells else 0
     return {
+        "analysis": analyse(commanders, cards, identity),
         "commanders": commanders,
         "companions": companions,
         "cards": [{"count": c, **d} for c, d in cards],
         "problems": problems,
         "stats": {"total": total, "curve": curve, "types": types, "avg_cmc": round(avg, 2), "identity": [c for c in "WUBRG" if c in identity]},
     }
+
+
+# ---- analysis ------------------------------------------------------------------
+
+ROLES = {  # rough oracle-text patterns; good enough to spot a deck that's short on something
+    "Ramp": r"add \{|search your library for (up to \w+ )?(a )?basic land|lands? cards?.{0,40}onto the battlefield|create[^.]*treasure",
+    "Card draw": r"\bdraws? (a|two|three|four|x|that many|cards?|an additional)|investigate|connive",
+    "Removal": r"(destroy|exile) target|damage to (any target|target creature|target planeswalker)|return target (creature|nonland|permanent)[^.]*owner's hand|fights? target",
+    "Board wipes": r"(destroy|exile) all|damage to each creature|all creatures get -|return all (creatures|nonland)|each (player|opponent) sacrifices (a|all) creatures",
+    "Counterspells": r"counter target",
+    "Tutors": r"search your library for (a|an|up to (one|two)) (?!basic)[^.]*card",
+    "Protection": r"hexproof|indestructible|phase out|shroud|\bward\b",
+}
+MLD = r"destroy all lands|destroy all nonbasic lands|each player sacrifices (all|\w+) lands|sacrifice all lands"
+EXTRA_TURNS = r"takes? an extra turn"
+
+
+def analyse(commanders, cards, identity):
+    """Deck roles, colour pips vs. land sources, and a rough Commander bracket estimate."""
+    roles = {r: [] for r in ROLES}
+    pips = {c: 0 for c in "WUBRG"}
+    sources = {c: 0 for c in "WUBRG"}
+    gc_list, mld, turns = scryfall.game_changers(), [], []
+    for count, d in cards:
+        text, name = d["oracle_text"].lower(), d["name"]
+        if "Land" not in d["type_line"]:
+            for role, rx in ROLES.items():
+                if re.search(rx, text):
+                    roles[role].append(name)
+            for c in "WUBRG":
+                pips[c] += count * len(re.findall(r"\{[^}]*" + c + r"[^}]*\}", d.get("mana_cost", "")))
+        else:
+            makes = set(re.findall(r"\{([wubrg])\}", text.split("add", 1)[1] if "add" in text else ""))
+            if "any color" in text or "commander's color identity" in text or "any one color" in text:
+                makes = set("wubrg")
+            makes |= {c for c, t in zip("wubrg", ("plains", "island", "swamp", "mountain", "forest")) if t in d["type_line"].lower()}
+            for c in makes:
+                if c.upper() in identity:
+                    sources[c.upper()] += count
+        if re.search(MLD, text):
+            mld.append(name)
+        if re.search(EXTRA_TURNS, text):
+            turns.append(name)
+    gcs = sorted({d["name"] for _, d in cards if d["name"] in gc_list} | {d["name"] for d in commanders if d["name"] in gc_list})
+    if len(gcs) > 3 or mld:
+        bracket, why = 4, "more than 3 Game Changers" if len(gcs) > 3 else "mass land destruction"
+    elif gcs or len(turns) > 1:
+        bracket, why = 3, (f"{len(gcs)} Game Changer{'s' if len(gcs) != 1 else ''}" if gcs else "several extra-turn cards")
+    else:
+        bracket, why = 2, "no Game Changers, mass land destruction or chained extra turns"
+    return {"roles": {r: sorted(set(n)) for r, n in roles.items()}, "pips": pips, "sources": sources,
+            "game_changers": gcs, "mld": sorted(set(mld)), "extra_turns": sorted(set(turns)),
+            "bracket": bracket, "bracket_why": why}
 
 
 def to_dck(name, resolved, rename=None):

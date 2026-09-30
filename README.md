@@ -4,8 +4,10 @@ A desktop app for testing Commander decks against a bot. Games run on [Forge](ht
 
 - **Play vs Bot:** a 1v1 Commander game in the app, with Scryfall card art. Forge applies every rule; the board shows what you can play (green), what you can pick (gold), attackers (red) and blockers (blue). The bot's turn plays out by itself at a watchable pace: each land, spell, attack and block is announced in the lane between the battlefields, and the game pauses on it (Bot speed: Slow 7s / Normal 4s / Fast 2s / Instant). If you hold an instant-speed play (e.g. an instant with a legal target, or an activated ability you can afford), the game stops at the bot's attack, blocks and end step, and whenever it casts something, so you can respond; otherwise it flows through. Triggered abilities (yours or the bot's, e.g. Esper Sentinel) show as a "Trigger!" card on the stack in that lane: if you can respond the game holds priority for you, otherwise they resolve after a moment to read. Scry and surveil ask which cards go to the bottom/graveyard, then let you order the rest. You tap your own mana: usable sources glow gold while paying (brighter for what Forge's Auto would pick), and floating mana in the pool is spent by clicking it (Cabal Coffers and other costed mana abilities work); tick Auto-pay mana to skip this. You get priority in every step (CR 117.3a): the game holds when you have an instant-speed play and otherwise shows each step briefly before passing, combat included (beginning, attackers, blockers, damage, end). Anything on the stack offers Pass priority or Respond; turns are counted in rounds; the bot's hand shows as card backs; your commander leaving play asks whether it goes to the command zone. Space/Enter presses the main button. The main buttons sit in an action bar beside your hand. "Stop for me" is set to *When it matters* by default: the game waits for you only when the bot casts or triggers something you can answer, when it attacks, at its end step, and after your blocks. *At every step I can act* restores the old behaviour. **To my turn** passes everything until your next main phase and **Pass turn** (Shift+Space) passes until the turn ends; both still ask you about blocks and choices. Nothing pops up over the board: every question (choices, targets, numbers, decisions, game over and the review) sits in the dock on the right, which widens when it needs room, and cards slide between zones as they move. While Forge loads, the loading screen shows art from both decks.
 - **Advanced bot that learns (optional, Claude):** Claude plans the bot's turns, decides whether to answer your spells, and after each game reviews the log, grades the bot's decisions (and yours) and rewrites `data/bot-lessons.md`, which every later decision reads. Reports are saved in `data/reviews/`.
-- **Decks:** paste any decklist (Moxfield, Arena or MTGO export) or import public decks from Moxfield by URL or username. Decks are saved locally.
-- **Scryfall check:** card lookup (cached in `data/cards.json`), 100-card, singleton, color-identity and ban checks, mana curve, and a card image grid.
+- **Home:** pick your deck and Jace's with art-backed pickers (your last matchup is remembered) and hit Play; your decks and Jace's presets sit below as tiles.
+- **Guided tour & Help:** first launch walks you through the app with spotlights on the real UI, and your first game gets a short tour of the board. The Help page (top right) is a searchable guide to every system and can replay both tours.
+- **Decks:** paste any decklist (Moxfield, Arena or MTGO export) or import public decks from Moxfield by URL or username. The library has search, sorting and tags; decks can be duplicated, renamed, copied to the clipboard and deleted. The builder shows the deck as card art: add cards with Scryfall search, and use + / − / ★ (commander) / ✕ on hover.
+- **Deck analysis:** card lookup (cached in `data/cards.json`), 100-card, singleton, color-identity and ban checks, mana curve, card types, ramp/draw/removal/wipe counts against common targets, color costs vs. land sources, and a bracket estimate from the Game Changers list.
 - **Simulate:** Forge's AI pilots both decks headless and reports win rates, game length and how games ended.
 - **Open in Forge instead:** exports both decks to Forge's own app, with its settings tuned so the bot's turns don't need clicking through.
 - **Preset bot decks (built from EDHREC average decks, with cards Forge's AI can't play swapped out, then tuned to Bracket 3: 37 lands, more card draw, at most 3 Game Changers):** Black Removal (Sheoldred, the Apocalypse), Green Stompy (Ghalta, Primal Hunger), Red Burn (Torbran, Thane of Red Fell), White Stax (Thalia, Guardian of Thraben), Blue Control (Baral, Chief of Compliance). See `presets/` and `edhrec.py`.
@@ -49,8 +51,8 @@ Open **MTG Goldfish** from the desktop, go to the **Settings** tab and click **D
 
 ### 5. Play
 
-1. **Decks** tab: paste a decklist (Moxfield, Arena or MTGO export), or import a public Moxfield deck by URL or username. Or just use one of the preset bot decks.
-2. **Test vs Bot** tab: pick your deck and the bot's deck, then start a game or run a simulation.
+1. **Decks** page: paste a decklist (Moxfield, Arena or MTGO export), build one card by card, or import a public Moxfield deck by URL or username. Or just use one of the preset bot decks.
+2. **Home**: pick your deck and Jace's deck, then Play. The **Play** page also runs simulations.
 
 The first game takes a little longer while the bridge compiles against your Forge install.
 
@@ -86,7 +88,7 @@ Then re-run `setup.bat` if `requirements.txt` changed.
 - `POST /act`: card and player clicks and the OK/Cancel buttons, forwarded to Forge's own input handling.
 - `POST /answer`: replies to Forge's questions (choose cards, yes/no, numbers, dividing damage).
 
-`web/board.js` renders the snapshot (Preact + htm, vendored in `web/vendor/`, no build step) and sends clicks back. `forge.py` compiles the bridge against your Forge jar when needed (`bridge/classes/`) and launches it.
+`web/main.js` (with `decks.js`, `help.js`, `tour.js` and the shared `core.js`) is the app around it; `web/board.js` renders the snapshot (Preact + htm, vendored in `web/vendor/`, no build step) and sends clicks back. `forge.py` compiles the bridge against your Forge jar when needed (`bridge/classes/`) and launches it.
 
 ## Notes
 

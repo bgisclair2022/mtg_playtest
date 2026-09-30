@@ -2,6 +2,8 @@
 // The bridge owns all rules: every click here is forwarded to Forge, which decides what it means.
 // Cards are keyed by Forge's card id, so the board updates in place and cards glide between zones.
 import { html, render, useState, useEffect, useLayoutEffect, useRef } from './vendor/preact-htm.js';
+import { api, call, esc, prefs, setPref } from './core.js';
+import { Tour } from './tour.js';
 
 // Every step of the turn (CR 500-514); combat is split so each sub-step is visible.
 const PHASES = [
@@ -499,7 +501,18 @@ async function loadingArt() {
 
 const botName = (s) => s?.players?.find((p) => !p.local)?.name || 'Jace';
 const SPEEDS = [['7000', 'Slow'], ['4000', 'Normal'], ['2000', 'Fast'], ['0', 'Instant']];
-function savedSpeed() { try { const v = localStorage.getItem('goldfish-speed'); if (SPEEDS.some(([k]) => k === v)) return +v; } catch { /* ignore */ } return 4000; }
+function savedSpeed() { const v = String(prefs.speed ?? ''); return SPEEDS.some(([k]) => k === v) ? +v : 4000; }
+
+// First game: what each part of the board is for.
+const BOARD_TIPS = [
+  { title: 'Your first game', text: 'A quick look at the board before you start. The arrow keys move through these tips; Esc skips them.' },
+  { sel: '.g-bar.opp', title: 'Jace', text: 'Life total (click it when a spell targets a player), hand, library, graveyard and exile (click to look), and his commander on the right.' },
+  { sel: '.g-lane', title: 'Turn, phases and the stack', text: `Where the turn is, and what's on the stack. When Jace does something it shows here while the game pauses on it; triggers are marked "Trigger!".` },
+  { sel: '.g-hand', title: 'Your hand', text: 'Green glow = you can play it: click to play a land or cast a spell. Hover any card to see it large. Gold means "pick this" (a target, a blocker, a land to tap).' },
+  { sel: '.g-actionbar', title: 'The action bar', text: 'What the game wants from you, and the buttons for it. Space presses the main button. "To my turn" skips ahead until your next turn.' },
+  { sel: '.g-bar.me', title: 'You', text: 'Your life, zones, commander (with its tax) and mana pool. Click floating mana to spend it while paying a cost.' },
+  { sel: '.d-foot', title: 'Game settings', text: `Jace's speed, when the game should stop for you (default: only when it matters), and auto-pay for mana. The log above shows everything that happened.` },
+];
 
 // ---- the whole game view ----
 function Game() {
@@ -507,6 +520,7 @@ function Game() {
   const [ui, setUi] = useState({ responding: null, zone: null, stayOnBoard: false });
   const [action, setAction] = useState(null);
   const [speed, setSpeed] = useState(savedSpeed());
+  const [tips, setTips] = useState(false);
   G.setState = (patch) => setSt((cur) => ({ ...cur, ...patch }));
   ui.set = (patch) => setUi((cur) => ({ ...cur, ...patch }));
   const s = st.s;
@@ -527,7 +541,7 @@ function Game() {
   useEffect(() => {
     const key = (e) => {
       const p = G.last?.prompt;
-      if (!p || G.last.ask || G.last.gameOver || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      if (!p || G.last.ask || G.last.gameOver || document.querySelector('.tour') || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       if (e.key === ' ' && e.shiftKey && p.input === 'InputPassPriority') { e.preventDefault(); act('skip', { value: 'turn' }); return; }
       if ((e.key === ' ' || e.key === 'Enter') && p.okOn) { e.preventDefault(); act('ok'); }
       if (e.key === 'Escape' && p.cancelOn) act('cancel');
@@ -539,6 +553,7 @@ function Game() {
   if (st.error) return html`<${Loading} msg=${st.error} stuck onBack=${leaveGame} />`;
   if (!s || !s.players) return html`<${Loading} msg=${s?.prompt?.message || 'Starting Forge… (the first game takes ~20 seconds to load cards)'} />`;
   G.last = s;
+  if (!prefs.boardTipsDone && !tips && !G.tipsShown) { G.tipsShown = true; setTimeout(() => setTips(true), 600); } // first game: a short board tour
 
   const me = s.players.find((p) => p.local), opp = s.players.find((p) => !p.local);
   const all = s.players.flatMap((p) => [...p.hand, ...p.battlefield, ...p.command, ...p.graveyard, ...p.exile]).concat(s.stack.map((x) => x.card));
@@ -588,7 +603,7 @@ function Game() {
       <div class="d-foot">
         <label>Jace's speed <select value=${String(speed)} onChange=${(e) => {
           setSpeed(+e.target.value);
-          try { localStorage.setItem('goldfish-speed', e.target.value); } catch { /* per-viewer nicety only */ }
+          setPref('speed', +e.target.value);
           act('speed', { value: +e.target.value });
         }}>${SPEEDS.map(([v, l]) => html`<option value=${v}>${l}</option>`)}</select></label>
         <label>Stop for me <select value=${s.stops || 'smart'} onChange=${(e) => act('stops', { value: e.target.value })}>
@@ -598,6 +613,7 @@ function Game() {
       </div>
     </aside>
     <${Toasts} notices=${s.notices} />
+    ${tips && html`<${Tour} steps=${BOARD_TIPS} onDone=${() => { setTips(false); setPref('boardTipsDone', true); }} />`}
   </div>`;
 }
 
@@ -605,7 +621,7 @@ function Game() {
 const root = document.getElementById('view-game');
 async function startGame(you, bot) {
   G.running = false;
-  Object.assign(G, { you, bot, version: -1 });
+  Object.assign(G, { you, bot, version: -1, tipsShown: false });
   artCache = null;
   root.hidden = false;
   render(null, root);
