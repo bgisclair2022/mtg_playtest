@@ -116,8 +116,10 @@ SCHEMAS["review"] = {
                       "description": "up to 4 short observations on the human's play: missed lines or strong plays"},
         "lessons_md": {"type": "string", "description": (
             "the COMPLETE updated lessons file in Markdown: keep what still holds, merge duplicates, fix anything this "
-            "game proved wrong, add new lessons. General and reusable (not about this one game), grouped under short "
-            "headings, at most ~40 bullets.")},
+            "game proved wrong, add new lessons. The bot may be handed ANY deck, so these are general rules for "
+            "Commander play: principles for any deck, and how to pilot and how to beat each archetype (aggro, control, "
+            "ramp, stax, midrange, combo). Not about this one game or these particular decks: name cards only as brief "
+            "examples. Grouped under short headings, at most ~40 bullets.")},
     },
 }
 
