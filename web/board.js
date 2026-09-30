@@ -194,8 +194,18 @@ function PlayerBar({ p, s, onZone }) {
 }
 
 function Hand({ me, s }) {
+  // Overlap the cards just enough to fit the space next to the action bar.
+  const ref = useRef();
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const ro = new ResizeObserver(([e]) => setWidth(e.contentRect.width));
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
   const n = me.hand.length;
-  return html`<div class="g-hand" style=${{ '--overlap': n > 9 ? `${Math.min(40, (n - 9) * 5)}px` : '0px' }}>
+  const cw = ref.current?.querySelector('.gc-slot')?.offsetWidth || 0;
+  const overlap = n > 1 && cw && width ? Math.max(0, (n * (cw + 6) - width) / (2 * (n - 1))) : 0;
+  return html`<div class="g-hand" ref=${ref} style=${{ '--overlap': `${Math.ceil(overlap)}px` }}>
     ${me.hand.map((c) => html`<${Card} key=${c.id} c=${c} s=${s} />`)}</div>`;
 }
 
@@ -235,6 +245,9 @@ function friendlyPrompt(s, me, ui) {
   const myTurn = s.activePlayer === me.id;
   const anyPlayable = (c) => c.playable && !c.land;
   const mine = me.hand.concat(me.battlefield, me.command, me.graveyard, me.exile);
+  if (!p.input) { // Forge isn't asking you anything right now (the bot is acting, or a step is changing)
+    return { title: myTurn ? 'Your turn' : `${botName(s)} is playing…`, msg: '', hideOk: true, hideCancel: true, quiet: true };
+  }
   if (p.input === 'InputPassPriority') {
     const top = topOfStack(s);
     if (top) {
@@ -244,8 +257,9 @@ function friendlyPrompt(s, me, ui) {
         return { title: 'Responding', msg: `Click a glowing card to cast or activate it in response to ${whose.toLowerCase()} ${thing}.`, hideOk: true, hideCancel: true, extra: ['Back', () => ui.set({ responding: null })] };
       }
       const canRespond = s.holding || mine.some(anyPlayable);
-      return { title: top.trigger ? 'Trigger on the stack' : 'Spell on the stack', msg: `${whose} ${thing}. Pass priority to let it resolve${canRespond ? ', or respond' : ''}.`,
-        ok: 'Pass priority', hideCancel: true, extra: canRespond ? ['Respond', () => ui.set({ responding: top.id })] : null };
+      if (!canRespond) return { title: top.trigger ? 'Trigger on the stack' : 'Spell on the stack', msg: `${whose} ${thing}. Nothing to respond with, resolving…`, ok: 'Pass priority', hideCancel: true, quiet: true };
+      return { title: top.trigger ? 'Trigger on the stack' : 'Spell on the stack', msg: `${whose} ${thing}. Pass priority to let it resolve, or respond.`,
+        ok: 'Pass priority', hideCancel: true, extra: ['Respond', () => ui.set({ responding: top.id })] };
     }
     if (myTurn && s.phaseKey === 'MAIN1') return { title: 'Your main phase', msg: 'Play a land and cast spells (green = playable).', ok: 'To combat' };
     if (myTurn && s.phaseKey === 'MAIN2') return { title: 'Second main phase', msg: 'Cast anything else, then end your turn.', ok: 'End turn' };
@@ -276,8 +290,12 @@ function PromptPanel({ s, me, opp, ui }) {
   return html`<div class=${'d-panel prompt' + (f.quiet ? ' quiet' : '') + (/^Input(Attack|Block)$/.test(p.input) ? ' combat' : '')}>
     <div class="d-title">${tidy(f.title)}</div>
     ${p.card && html`<div class="d-card"><${Card} c=${p.card} s=${s} noClick opts=${{ flip: false }} /></div>`}
-    <div class="d-msg">${tidy(f.msg)}</div>
+    ${f.msg && html`<div class="d-msg">${tidy(f.msg)}</div>`}
     ${combat}
+    ${p.input === 'InputPassPriority' && !s.stack.length && html`<div class="d-skip">
+      ${!(s.activePlayer === me.id && /^MAIN/.test(s.phaseKey)) && html`<button title="Pass priority until this turn ends (Shift+Space). You're still asked about blocks." onClick=${() => act('skip', { value: 'turn' })}>Pass turn</button>`}
+      <button title="Pass everything until your next main phase (you're still asked about blocks)" onClick=${() => act('skip', { value: 'myturn' })}>To my turn</button>
+    </div>`}
     <div class="d-btns">
       ${f.extra && html`<button onClick=${f.extra[1]}>${f.extra[0]}</button>`}
       ${p.cancelOn && !f.hideCancel && html`<button onClick=${() => act('cancel')}>${p.cancel}</button>`}
@@ -300,6 +318,10 @@ function DecisionPanel({ s }) {
       <button class="primary" onClick=${() => act('ok')}>${cmdZone ? 'Command zone' : p.ok}</button>
     </div></div>`;
 }
+
+// Short questions fit beside the hand; card choices, long lists and damage division need the dock.
+const compactAsk = (a) => a.kind === 'options' || a.kind === 'number' || a.kind === 'input'
+  || (a.kind === 'choose' && !a.items.some((it) => it.card) && a.items.length <= 6);
 
 // Questions Forge asks (choices, confirms, numbers, damage division).
 function AskPanel({ a, s }) {
@@ -506,6 +528,7 @@ function Game() {
     const key = (e) => {
       const p = G.last?.prompt;
       if (!p || G.last.ask || G.last.gameOver || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      if (e.key === ' ' && e.shiftKey && p.input === 'InputPassPriority') { e.preventDefault(); act('skip', { value: 'turn' }); return; }
       if ((e.key === ' ' || e.key === 'Enter') && p.okOn) { e.preventDefault(); act('ok'); }
       if (e.key === 'Escape' && p.cancelOn) act('cancel');
     };
@@ -530,10 +553,19 @@ function Game() {
 
   const deciding = /^InputConfirm/.test(s.prompt.input || '') && s.prompt.input !== 'InputConfirmMulligan' && !s.ask && s.prompt.okOn;
   const zone = ui.zone && html`<${ZonePanel} zone=${ui.zone} s=${s} onClose=${() => ui.set({ zone: null })} />`;
-  const main = s.gameOver ? html`<${GameOver} s=${s} onLeave=${leaveGame} onRematch=${() => startGame(G.you, G.bot)} />`
+  // Short questions and the main buttons sit beside your hand; card choices and the review get the dock's room.
+  const bigAsk = s.ask && !compactAsk(s.ask);
+  const bar = s.gameOver ? html`<div class="d-panel over-bar"><div class="d-title">${s.winner ? (me.name === s.winner ? '🏆 You win!' : `${s.winner} wins`) : 'Draw'}</div>
+        <div class="d-btns"><button onClick=${leaveGame}>Back to decks</button><button class="primary" onClick=${() => startGame(G.you, G.bot)}>Rematch</button></div></div>`
+    : s.skip ? html`<div class="d-panel prompt quiet"><div class="d-title">${s.skip === 'myturn' ? 'Passing to your turn…' : 'Passing to the end of the turn…'}</div>
+        <div class="d-msg">You'll still be asked about blocks and choices.</div>
+        <div class="d-btns"><button class="primary" onClick=${() => act('skip', { value: 'stop' })}>Stop</button></div></div>`
+    : bigAsk ? html`<div class="d-panel prompt"><div class="d-title">${tidy(s.ask.message)}</div><div class="d-msg">Choose in the panel on the right →</div></div>`
     : s.ask ? html`<${AskPanel} key=${s.ask.id} a=${s.ask} s=${s} />`
     : deciding ? html`<${DecisionPanel} s=${s} />`
     : html`<${PromptPanel} s=${s} me=${me} opp=${opp} ui=${ui} />`;
+  const main = s.gameOver ? html`<${GameOver} s=${s} onLeave=${leaveGame} onRematch=${() => startGame(G.you, G.bot)} />`
+    : bigAsk ? html`<${AskPanel} key=${s.ask.id} a=${s.ask} s=${s} />` : null;
   const wide = !!(ui.zone || (s.ask?.items?.some((it) => it.card) && s.ask.items.length > 4));
 
   return html`<div class=${'g-wrap' + (wide ? ' wide' : '') + (s.gameOver ? ' over' : '')}>
@@ -543,10 +575,13 @@ function Game() {
       <${Lane} s=${s} me=${me} action=${action} />
       <${Battlefield} p=${me} s=${s} blocks=${blocks} />
       <${PlayerBar} p=${me} s=${s} onZone=${(p, z) => ui.set({ zone: { player: p.id, zone: z } })} />
-      <${Hand} me=${me} s=${s} />
+      <div class="g-bottom">
+        <${Hand} me=${me} s=${s} />
+        <div class="g-actionbar" key=${s.ask?.id || (s.gameOver ? 'over' : deciding ? 'decide' : s.skip ? 'skip' : 'prompt')}>${bar}</div>
+      </div>
     </div>
     <aside class="g-dock">
-      <div class="d-main" key=${s.ask?.id || (s.gameOver ? 'over' : deciding ? 'decide' : 'prompt')}>${main}</div>
+      ${main && html`<div class="d-main" key=${s.ask?.id || 'over'}>${main}</div>`}
       ${zone}
       <${Tray} s=${s} />
       <${Log} lines=${s.log} />
@@ -556,7 +591,8 @@ function Game() {
           try { localStorage.setItem('goldfish-speed', e.target.value); } catch { /* per-viewer nicety only */ }
           act('speed', { value: +e.target.value });
         }}>${SPEEDS.map(([v, l]) => html`<option value=${v}>${l}</option>`)}</select></label>
-        <label class="check"><input type="checkbox" checked=${s.autoPass} onChange=${(e) => act('autopass', { value: e.target.checked })} /> Auto-pass steps where I have nothing to play</label>
+        <label>Stop for me <select value=${s.stops || 'smart'} onChange=${(e) => act('stops', { value: e.target.value })}>
+          <option value="smart">When it matters</option><option value="held">At every step I can act</option><option value="all">At every step</option></select></label>
         <label class="check"><input type="checkbox" checked=${s.autoPay} onChange=${(e) => act('autopay', { value: e.target.checked })} /> Auto-pay mana (untick to choose lands)</label>
         <div class="d-btns">${!s.gameOver && html`<button class="danger" onClick=${() => confirm('Concede this game?') && act('concede')}>Concede</button>`}<button onClick=${leaveGame}>Leave game</button></div>
       </div>

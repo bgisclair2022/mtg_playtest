@@ -85,9 +85,25 @@ button.chip { cursor: pointer; }
 .g-cmd .gc .pt { display: none; }
 
 /* ---- hand ---- */
-.g-hand { display: flex; justify-content: center; padding: 8px 0 12px; --cw: clamp(64px, min(7vw, 10.5vh), 120px); min-height: calc(var(--cw) * 1.395 + 20px); }
+.g-hand { display: flex; justify-content: center; gap: 6px; padding: 8px 0 12px; --cw: clamp(64px, min(7vw, 10.5vh), 120px); min-height: calc(var(--cw) * 1.395 + 20px); }
 .g-hand .gc-slot { margin: 0 calc(var(--overlap, 0px) * -1); }
 .g-hand .gc-slot:hover { transform: translateY(-16px); z-index: 5; }
+
+/* ---- bottom row: hand + action bar (the main buttons live next to your cards) ---- */
+.g-bottom { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; align-items: center; min-width: 0; }
+.g-bottom .g-hand { min-width: 0; }
+.g-actionbar { align-self: stretch; display: flex; flex-direction: column; justify-content: center; padding: 6px 0 10px; animation: dock-in .2s ease-out;
+  --cw: 58px; min-height: 0; }
+.g-actionbar .d-panel { max-height: calc(var(--hand-h, 180px)); overflow: auto; gap: 8px; padding: 10px 12px; scrollbar-width: thin; }
+.g-actionbar .d-card { float: left; margin: 0 10px 4px 0; --cw: 58px; }
+.g-actionbar .d-msg { max-height: 4.4em; overflow: auto; }
+.g-actionbar .d-panel .d-btns button { padding: 10px 18px; font-size: 15px; }
+.g-actionbar .d-panel .d-btns button.primary { min-width: 140px; }
+.g-actionbar .d-combat { font-size: 12px; }
+.d-skip { display: flex; gap: 6px; }
+.d-skip button { flex: 1; padding: 5px 8px; font-size: 12px; color: var(--muted); }
+.d-skip button:hover { color: var(--text); }
+.over-bar .d-title { font-size: 20px; }
 
 /* ---- center lane: turn, phases, stack, and what Jace just did ---- */
 .g-lane { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; background: var(--panel); border: 1px solid var(--line);

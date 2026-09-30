@@ -344,6 +344,12 @@ public final class Bridge {
         private int askSeq = 0, noticeSeq = 0;
         private final Deque<JsonObject> notices = new ArrayDeque<>();
         private volatile boolean autoPass = true, autoPay = false;
+        // Stops: "smart" holds only where a response matters (the bot casts or triggers something, attacks, or ends
+        // its turn; your own blockers step); "held" holds at every step where you have a play (the old behaviour).
+        private volatile boolean everyStep = false;
+        // "Pass turn" / "To my turn": pass everything until the turn ends, or until your next main phase.
+        private volatile int skipFromTurn = -1;
+        private volatile boolean skipToMyTurn;
         private volatile int paceMs = 4000; // base pause after a bot action; the board's speed setting changes it
         private int actionSeq = 0;
         private JsonObject lastAction;
@@ -432,6 +438,21 @@ public final class Bridge {
                 });
                 return;
             }
+            if (skipping(gv)) {
+                // Still asked about blocks and choices; your own attack step is skipped (no attackers).
+                if ("InputAttack".equals(input) || "InputPassPriority".equals(input)) {
+                    holding = false;
+                    final int turn = gv.getTurn();
+                    final String kind = input;
+                    timer.schedule(() -> SwingUtilities.invokeLater(() -> {
+                        final GameView g = getGameView();
+                        if (pending == null && g != null && g.getTurn() == turn && kind.equals(inputName()) && skipping(g)) {
+                            getGameController().selectButtonOk();
+                        }
+                    }), gv.peekStack() == null ? Math.min(250, stepDelay(gv.getPhase())) : 150, TimeUnit.MILLISECONDS);
+                }
+                return;
+            }
             if (!"InputPassPriority".equals(input)) {
                 return;
             }
@@ -446,7 +467,7 @@ public final class Bridge {
                     holding = false;
                     return;
                 }
-                holding = canRespondNow();
+                holding = canRespondNow() && (everyStep || !autoPass || worthStopping(ph, myTurn));
                 if (!holding && autoPass) {
                     passStepLater(gv.getTurn(), ph, stepDelay(ph));
                 }
@@ -459,7 +480,11 @@ public final class Bridge {
                 // Triggers (yours or the bot's): the board pops up "Trigger!". Hold if you can respond;
                 // otherwise give you a moment to read it, then let it resolve.
                 final boolean first = seenTriggers.add(top.getId());
-                if (!canRespond) {
+                final boolean yours = top.getActivatingPlayer() != null && isLocalPlayer(top.getActivatingPlayer());
+                if (canRespond && yours && !everyStep && autoPass) { // your own trigger: show it, then let it resolve
+                    holding = false;
+                    passLater(top.getId(), first ? Math.max(900, paceMs / 2) : 0);
+                } else if (!canRespond) {
                     passLater(top.getId(), first ? Math.max(900, paceMs) : 0);
                 }
                 return;
@@ -469,6 +494,28 @@ public final class Bridge {
                 return; // hold: you can answer the bot's spell (or auto-pass is off)
             }
             passLater(top.getId(), 0); // your own spell, or nothing you could do about theirs
+        }
+
+        /** Smart stops, with an empty stack: where an instant-speed play usually matters. */
+        private static boolean worthStopping(PhaseType ph, boolean myTurn) {
+            return myTurn ? ph == PhaseType.COMBAT_DECLARE_BLOCKERS // after blocks: combat tricks
+                          : ph == PhaseType.COMBAT_DECLARE_ATTACKERS || ph == PhaseType.END_OF_TURN; // their attack, their end step
+        }
+
+        /** True while "Pass turn" / "To my turn" is carrying you forward; clears itself when it arrives. */
+        private boolean skipping(GameView gv) {
+            if (skipFromTurn < 0) {
+                return false;
+            }
+            final boolean myTurn = gv.getPlayerTurn() != null && isLocalPlayer(gv.getPlayerTurn());
+            final boolean arrived = skipToMyTurn
+                    ? gv.getTurn() > skipFromTurn && myTurn && gv.getPhase() == PhaseType.MAIN1
+                    : gv.getTurn() > skipFromTurn;
+            if (arrived) {
+                skipFromTurn = -1;
+                bump();
+            }
+            return !arrived;
         }
 
         /** How long an empty step stays on screen before we pass for you, as a share of the bot-speed setting. */
@@ -557,6 +604,19 @@ public final class Bridge {
                     if (i >= 0) {
                         c.useMana(POOL_ATOMS[i]); // spend that mana from your pool
                     }
+                }
+                case "stops" -> { // "smart" | "held" | "all"
+                    final String v = a.get("value").getAsString();
+                    everyStep = !"smart".equals(v);
+                    autoPass = !"all".equals(v);
+                    bump();
+                }
+                case "skip" -> { // "turn" | "myturn" | "stop"
+                    final String v = a.get("value").getAsString();
+                    final GameView g = getGameView();
+                    skipToMyTurn = "myturn".equals(v);
+                    skipFromTurn = "stop".equals(v) || g == null ? -1 : g.getTurn();
+                    bump();
                 }
                 case "autopay" -> {
                     autoPay = a.get("value").getAsBoolean();
@@ -694,6 +754,8 @@ public final class Bridge {
             o.add("prompt", p);
             o.addProperty("autoPass", autoPass);
             o.addProperty("autoPay", autoPay);
+            o.addProperty("stops", !autoPass ? "all" : everyStep ? "held" : "smart");
+            o.addProperty("skip", skipFromTurn < 0 ? "" : skipToMyTurn ? "myturn" : "turn");
             o.addProperty("holding", holding); // true while the bridge waits for you because you have a play
 
             final GameView gv = getGameView();
@@ -820,7 +882,7 @@ public final class Bridge {
                 if (kind.equals("InputPassPriority")) {
                     final Set<Integer> all = actions(me, false);
                     respondNow = !actions(me, true).isEmpty();
-                    holding = respondNow; // keep the snapshot's hold flag in step with this very prompt
+                    holding = respondNow && (everyStep || !autoPass); // smart stops: decideAutoPass sets it a moment later
                     playableNow = all;
                 } else {
                     playableNow = new HashSet<>();
