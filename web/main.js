@@ -43,7 +43,7 @@ function DeckPicker({ label, decks, value, onChange, art }) {
 function Difficulty({ settings, value, onChange, go }) {
   if (!settings) return null;
   if (!settings.llm_backend) {
-    return html`<div class="difficulty off">Jace: Forge AI · <a href="#" onClick=${(e) => { e.preventDefault(); go('settings'); }}>connect Claude</a> for Smarter Jace and difficulty levels</div>`;
+    return html`<div class="difficulty off" data-tour="difficulty">Jace: Forge AI · <a href="#" onClick=${(e) => { e.preventDefault(); go('settings'); }}>connect Claude</a> for Smarter Jace and difficulty levels</div>`;
   }
   const levels = settings.difficulties || {};
   const cur = levels[value] || levels.normal;
@@ -286,6 +286,9 @@ function App() {
   const steps = [
     { before: () => go('home'), title: 'Welcome to MTG Goldfish', text: 'Test your Commander decks 1-on-1 against Jace, a bot on Forge\'s full rules engine. This one-minute tour shows where everything is (the arrow keys work too).' },
     { sel: '[data-tour=matchup]', title: 'Pick a matchup', text: 'Choose your deck and the deck Jace plays: one of his presets, or any deck of yours. Your last matchup is remembered.' },
+    { sel: '[data-tour=difficulty]', title: 'Difficulty', text: settings?.llm_backend
+        ? `Pick how hard Jace plays before each match: Easy, Normal, Hard or Expert. Each level is a Markdown file you can edit (Settings → Open difficulty files), and every level uses the same Claude model, so the cost doesn't change.`
+        : `With Claude connected (Smarter Jace, in Settings) you can pick how hard Jace plays before each match: Easy, Normal, Hard or Expert. Without it, Jace is Forge's built-in AI.` },
     { sel: '[data-tour=play-cta]', title: 'Play', text: 'Starts a game right here. Jace\'s turns play out by themselves at a speed you can follow; you get a short tour of the board in your first game.' },
     { sel: '[data-tour=nav-decks]', title: 'Your decks', text: 'Everything about decks lives on the Decks page.' },
     { before: () => { setSelected(refOf(decks.find((d) => d.preset))); go('decks'); }, sel: '[data-tour=deck-new]', title: 'Add decks', text: 'Start a new deck (paste a list or build card by card) or import a public deck from Moxfield. Search, sort and tag your library below.' },

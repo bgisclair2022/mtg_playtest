@@ -8,7 +8,7 @@ const SECTIONS = [
     <ol>
       <li><b>Set up Forge</b> once on the Settings page (one click downloads it; it needs Java 17+).</li>
       <li><b>Add a deck</b> on the Decks page: paste a list, build one card by card, or import from Moxfield.</li>
-      <li><b>Pick a matchup</b> on Home: your deck against one of Jace's decks (or any deck of yours).</li>
+      <li><b>Pick a matchup</b> on Home: your deck against one of Jace's decks (or any deck of yours). With Smarter Jace on, also pick a <b>difficulty</b> (Easy, Normal, Hard, Expert) just above the Play button.</li>
       <li><b>Play vs Jace.</b> Jace's turns play out by themselves at a speed you can follow.</li>
     </ol>` },
   { id: 'decks', title: 'Decks & the deck builder', body: html`
@@ -57,7 +57,7 @@ const SECTIONS = [
     </ul>` },
   { id: 'commander', title: 'Commander rules', body: html`
     <p>Your commander starts in the command zone (top-right of your bar) with its tax shown. When it would go to the graveyard or exile you're asked whether to move it back to the command zone. 21 combat damage from one commander loses the game. Companions start outside the game: pay {3} (a special action) to put yours into your hand.</p>` },
-  { id: 'jace', title: 'Jace, Smarter Jace & reviews', body: html`
+  { id: 'jace', title: 'Jace, difficulty & reviews', body: html`
     <p>Jace is Forge's AI. <b>Speed</b> (dock) sets how long the game pauses on each of Jace's actions.</p>
     <p><b>Difficulty</b> (with Smarter Jace on): pick it on Home or Play before each match. <b>Easy</b> plays like a relaxed casual player and rarely holds up answers; <b>Normal</b> is solid and uses what Jace has learned; <b>Hard</b> plays tight, holding interaction for real threats; <b>Expert</b> is ruthless and counts lethal every turn. Each level is a Markdown file in <i>difficulties/</i> (Settings → Open difficulty files): edit one to change how Jace plays, or add a new .md to add a level. Every level uses the same Claude model, so difficulty doesn't change what a game costs.</p>
     <p><b>Smarter Jace</b> (Settings) lets Claude plan Jace's turns, mulligans, attacks and responses. After each game Claude reviews the log, grades Jace's key decisions and your play, and updates <i>data/bot-lessons.md</i>, which later games read. It uses your Claude subscription (Claude Code) or an API key.</p>` },
