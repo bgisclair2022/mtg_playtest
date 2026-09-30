@@ -61,10 +61,10 @@ main { flex: 1; min-height: 0; overflow: auto; animation: view-in .22s ease-out;
 
 /* ---- home ---- */
 .home { padding: 0 0 30px; }
-.hero { position: relative; min-height: 340px; overflow: hidden; }
+.hero { position: relative; min-height: 340px; overflow-x: clip; } /* not clipped vertically: the deck menus drop below it */
 .hero-art { position: absolute; inset: 0; background: linear-gradient(135deg, #1e2230, #15171c) center 25% / cover; animation: hero-in 1.2s ease-out; }
 .hero-shade { position: absolute; inset: 0; background: linear-gradient(90deg, #15171cf2 0%, #15171cb0 45%, #15171c40 100%), linear-gradient(0deg, var(--bg) 0%, #15171c00 45%); }
-.hero-content { position: relative; display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; flex-wrap: wrap; padding: 48px 34px 30px; }
+.hero-content { position: relative; z-index: 5; display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; flex-wrap: wrap; padding: 48px 34px 30px; }
 .hero-text h1 { font-size: 34px; margin-bottom: 8px; text-shadow: 0 2px 16px #000; }
 .hero-text p { color: #cfd3da; font-size: 15px; margin: 0; max-width: 420px; }
 .matchup-card { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: end; background: #1e2128e6; backdrop-filter: blur(8px);
@@ -118,7 +118,7 @@ main { flex: 1; min-height: 0; overflow: auto; animation: view-in .22s ease-out;
 .caret { color: var(--muted); }
 .thumb { flex: none; width: 34px; height: 34px; border-radius: 8px; background: var(--panel-2) center 25% / cover; }
 .thumb.big { width: 54px; height: 44px; }
-.pick-menu { position: absolute; top: 100%; left: 0; right: 0; min-width: 280px; margin-top: 6px; z-index: 30; max-height: 360px; overflow: auto;
+.pick-menu { position: absolute; top: 100%; left: 0; right: 0; min-width: 280px; margin-top: 6px; z-index: 30; max-height: min(420px, 55vh); overflow-y: auto; overscroll-behavior: contain;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-shadow: 0 20px 50px #000c; animation: view-in .15s ease-out; }
 .pick-head { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); padding: 8px 8px 4px; }
 .pick-row { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; border: none; background: none; padding: 6px 8px; border-radius: 8px; }

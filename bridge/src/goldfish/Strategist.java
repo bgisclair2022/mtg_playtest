@@ -330,8 +330,10 @@ final class Strategist extends LobbyPlayerAi {
         }
 
         private void say(JsonObject r, String prefix) {
+            // Claude's reasoning stays hidden from the player (it would reveal Jace's hand and plans); it goes to the
+            // game log file, and the post-game review reads the decisions from the journal.
             if (r.has("note") && !r.get("note").getAsString().isBlank()) {
-                announce.accept(prefix + r.get("note").getAsString());
+                System.out.println("strategist: " + prefix + r.get("note").getAsString());
             }
         }
 

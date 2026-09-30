@@ -570,9 +570,11 @@ function Game() {
   const zone = ui.zone && html`<${ZonePanel} zone=${ui.zone} s=${s} onClose=${() => ui.set({ zone: null })} />`;
   // Short questions and the main buttons sit beside your hand; card choices and the review get the dock's room.
   const bigAsk = s.ask && !compactAsk(s.ask);
+  // While passing ahead, only the steps being passed show the "Passing…" panel; blocks and questions still show.
+  const skipping = s.skip && !s.ask && !deciding && (!s.prompt.input || /^(InputPassPriority|InputAttack)$/.test(s.prompt.input));
   const bar = s.gameOver ? html`<div class="d-panel over-bar"><div class="d-title">${s.winner ? (me.name === s.winner ? '🏆 You win!' : `${s.winner} wins`) : 'Draw'}</div>
         <div class="d-btns"><button onClick=${leaveGame}>Back to decks</button><button class="primary" onClick=${() => startGame(G.you, G.bot, G.level)}>Rematch</button></div></div>`
-    : s.skip ? html`<div class="d-panel prompt quiet"><div class="d-title">${s.skip === 'myturn' ? 'Passing to your turn…' : 'Passing to the end of the turn…'}</div>
+    : skipping ? html`<div class="d-panel prompt quiet"><div class="d-title">${s.skip === 'myturn' ? 'Passing to your turn…' : 'Passing to the end of the turn…'}</div>
         <div class="d-msg">You'll still be asked about blocks and choices.</div>
         <div class="d-btns"><button class="primary" onClick=${() => act('skip', { value: 'stop' })}>Stop</button></div></div>`
     : bigAsk ? html`<div class="d-panel prompt"><div class="d-title">${tidy(s.ask.message)}</div><div class="d-msg">Choose in the panel on the right →</div></div>`
@@ -592,7 +594,7 @@ function Game() {
       <${PlayerBar} p=${me} s=${s} onZone=${(p, z) => ui.set({ zone: { player: p.id, zone: z } })} />
       <div class="g-bottom">
         <${Hand} me=${me} s=${s} />
-        <div class="g-actionbar" key=${s.ask?.id || (s.gameOver ? 'over' : deciding ? 'decide' : s.skip ? 'skip' : 'prompt')}>${bar}</div>
+        <div class="g-actionbar" key=${s.ask?.id || (s.gameOver ? 'over' : deciding ? 'decide' : skipping ? 'skip' : 'prompt')}>${bar}</div>
       </div>
     </div>
     <aside class="g-dock">

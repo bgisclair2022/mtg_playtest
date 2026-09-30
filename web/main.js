@@ -12,7 +12,16 @@ const sameRef = (a, b) => a && b && a.name === b.name && !!a.preset === !!b.pres
 // ---- deck picker: art + name, opens a list ----
 function DeckPicker({ label, decks, value, onChange, art }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState({});
   const ref = useRef();
+  const toggle = () => { // open downward or upward, whichever has more room, and never past the window edge
+    if (!open) {
+      const r = ref.current.querySelector('.picker-btn').getBoundingClientRect();
+      const below = innerHeight - r.bottom - 16, above = r.top - 16;
+      setPlace(below >= 300 || below >= above ? { maxHeight: `${Math.min(420, below)}px` } : { maxHeight: `${Math.min(420, above)}px`, top: 'auto', bottom: '100%', marginBottom: '6px' });
+    }
+    setOpen(!open);
+  };
   useEffect(() => {
     if (!open) return;
     const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
@@ -27,12 +36,12 @@ function DeckPicker({ label, decks, value, onChange, art }) {
       <span><b>${d.name}</b><small>${commanderNames(d).join(' + ')}</small></span></button>`; };
   return html`<div class="picker" ref=${ref}>
     <span class="picker-label">${label}</span>
-    <button class="picker-btn" onClick=${() => setOpen(!open)}>
+    <button class="picker-btn" onClick=${toggle}>
       <span class="thumb big" style=${img ? { backgroundImage: `url("${artCrop(img)}")` } : null}></span>
       <span class="picker-text"><b>${cur?.name || 'Choose a deck'}</b><small>${cur ? commanderNames(cur).join(' + ') : ''}</small></span>
       <span class="caret">▾</span>
     </button>
-    ${open && html`<div class="pick-menu">
+    ${open && html`<div class="pick-menu" style=${place}>
       ${decks.some((d) => !d.preset) && html`<div class="pick-head">My decks</div>`}${decks.filter((d) => !d.preset).map(row)}
       <div class="pick-head">Jace's decks</div>${decks.filter((d) => d.preset).map(row)}
     </div>`}
