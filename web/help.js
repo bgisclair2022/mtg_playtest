@@ -73,7 +73,7 @@ const SECTIONS = [
     </table>` },
   { id: 'trouble', title: 'Troubleshooting', body: html`
     <ul>
-      <li><b>"Forge isn't set up"</b>: Settings → Download & install Forge, or point to an existing Forge folder. Install Java 17+ from adoptium.net if Settings says Java isn't found.</li>
+      <li><b>"Forge isn't set up" or "Java not found"</b>: double-click <i>setup.bat</i> in the app's folder again; it installs whatever is missing. Or use Settings → Download & install Forge, or point to an existing Forge folder.</li>
       <li><b>A card isn't found</b>: check the spelling on the Text tab; the list uses Scryfall names.</li>
       <li><b>The game stops responding</b>: leave and start again. Details for bug reports are in <i>data/logs/</i> (one log per game) and <i>data/app.log</i>.</li>
       <li><b>Moxfield import fails</b>: the deck must be public. Otherwise use Moxfield's Export → Copy and paste the list.</li>

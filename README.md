@@ -15,46 +15,30 @@ A desktop app for testing Commander decks against a bot. Games run on [Forge](ht
 
 ## Getting started
 
-MTG Goldfish runs on **Windows**. Setup takes about 10 minutes, most of it downloads.
+MTG Goldfish runs on **Windows 10/11**.
 
-### 1. Install the prerequisites
+1. **Download**: on GitHub click **Code → Download ZIP**, and unzip it somewhere permanent (e.g. `Documents\MTG Goldfish`; the desktop shortcut points at this folder). With Git: `git clone https://github.com/bgisclair2022/mtg_playtest.git`.
+2. **Double-click `setup.bat`.** That's it. It installs whatever is missing, skips whatever you already have, and opens the app when it's done:
+   - **Python 3.12** (via `winget`) if you don't have Python 3.10+
+   - the Python packages (`pywebview`, `anthropic`)
+   - **Java** (Temurin 21 JDK, via `winget`; Windows may ask for permission once)
+   - the **Forge** rules engine (about 300 MB) into `%USERPROFILE%\Forge`, unless Forge is already in `%USERPROFILE%\Forge` or `C:\Forge`
+   - the app's small Forge bridge
+   - an **MTG Goldfish** shortcut on your desktop and in the Start menu
 
-| What | Why | Where |
-|---|---|---|
-| **Python 3.10+** | runs the app | https://www.python.org/downloads/ (tick **"Add python.exe to PATH"** in the installer) |
-| **Java 17+ JDK** (not just a JRE) | runs Forge, and `javac` compiles the app's small Forge bridge the first time you play | https://adoptium.net/ (Temurin 17 or 21; tick **"Set JAVA_HOME"** and **"Add to PATH"**) |
-| **Git** (optional) | to clone and update the app | https://git-scm.com/download/win |
+   The first run takes a few minutes, mostly downloads. If a step fails, the window says what to do; fix it and run `setup.bat` again. Re-running it is also how you repair an install.
+3. **Play**: the app opens with a short guided tour. Pick your deck and one of Jace's on **Home**, then **Play vs Jace**. Add your own decks on the **Decks** page (paste a list, build card by card, or import from Moxfield).
 
-Check both in a new terminal:
+<details><summary>Installing the prerequisites by hand instead</summary>
 
-```bat
-python --version
-javac -version
-```
+If `winget` isn't available (older Windows 10), install these yourself, then run `setup.bat`:
 
-### 2. Get the code
+| What | Where |
+|---|---|
+| **Python 3.10+** | https://www.python.org/downloads/ (tick **"Add python.exe to PATH"**) |
+| **Java 17+ JDK** (not just a JRE) | https://adoptium.net/ (Temurin 17 or 21) |
 
-```bat
-git clone https://github.com/bgisclair2022/mtg_playtest.git
-cd mtg_playtest
-```
-
-No Git? Click **Code → Download ZIP** on GitHub and unzip it somewhere permanent (the desktop shortcut points at this folder, so don't leave it in a temp folder).
-
-### 3. Run setup (one time)
-
-Double-click **`setup.bat`**. It installs the Python packages from `requirements.txt` (`pywebview`, `anthropic`) and adds an **MTG Goldfish** shortcut to your desktop and Start menu.
-
-### 4. Install Forge
-
-Open **MTG Goldfish** from the desktop, go to the **Settings** tab and click **Download & install Forge**. It installs to `%USERPROFILE%\Forge`. If you already have Forge, `%USERPROFILE%\Forge` and `C:\Forge` are detected automatically, and any other folder can be picked on the same tab.
-
-### 5. Play
-
-1. **Decks** page: paste a decklist (Moxfield, Arena or MTGO export), build one card by card, or import a public Moxfield deck by URL or username. Or just use one of the preset bot decks.
-2. **Home**: pick your deck and Jace's deck, then Play. The **Play** page also runs simulations.
-
-The first game takes a little longer while the bridge compiles against your Forge install.
+</details>
 
 ### Optional: Advanced bot (Claude)
 
@@ -71,13 +55,13 @@ If Claude is slow or fails, the bot falls back to Forge's own AI.
 git pull
 ```
 
-Then re-run `setup.bat` if `requirements.txt` changed.
+Then run `setup.bat` again (it only installs what changed). With the ZIP, download the new one over the old folder and do the same.
 
 ### Troubleshooting
 
 - The shortcut runs without a console window; errors go to `data/app.log`, and in-game errors to `data/logs/`. Run `python app.py` from the folder to see errors live.
-- **"javac not found" / the game won't start:** you installed a JRE instead of a JDK, or Java isn't on PATH. Reinstall Temurin JDK with "Add to PATH" ticked and open a new terminal.
-- **`python` opens the Microsoft Store:** install Python from python.org with "Add to PATH" ticked, or turn off the `python.exe` App execution alias in Windows settings.
+- **"javac not found" / the game won't start:** run `setup.bat` again; it installs the Java JDK if it's missing. (A JRE alone isn't enough: the bridge needs `javac`.)
+- **`setup.bat` can't find or install Python:** install Python 3.10+ from python.org with "Add python.exe to PATH" ticked, then run `setup.bat` again.
 - **Moxfield import fails:** on the deck page use *Export → Copy for MTGA* and paste it into a new deck.
 
 ## How in-app games work

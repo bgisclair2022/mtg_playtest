@@ -28,7 +28,7 @@ def detect():
 
 def java_version():
     try:
-        out = subprocess.run(["java", "-version"], capture_output=True, text=True, creationflags=NO_WINDOW)
+        out = subprocess.run([java_exe() or "java", "-version"], capture_output=True, text=True, creationflags=NO_WINDOW)
         return (out.stderr or out.stdout).splitlines()[0]
     except OSError:
         return None
@@ -133,7 +133,7 @@ def apply_prefs(forge_dir, prefs=AUTO_PREFS):
 
 def launch(forge_dir):
     exe = os.path.join(forge_dir, "forge.exe")
-    cmd = [exe] if os.path.exists(exe) else ["java", "-jar", find_jar(forge_dir)]
+    cmd = [exe] if os.path.exists(exe) else [java_exe() or "java", "-jar", find_jar(forge_dir)]
     subprocess.Popen(cmd, cwd=forge_dir)
 
 
@@ -149,6 +149,11 @@ def _jdk_tool(name):
         return found
     roots = [os.environ.get("JAVA_HOME", "")] + glob.glob(r"C:\Program Files\Java\*") + glob.glob(r"C:\Program Files\Eclipse Adoptium\*")
     return next((p for r in roots if r and os.path.exists(p := os.path.join(r, "bin", name + ".exe"))), None)
+
+
+def java_exe():
+    """java.exe on PATH or in the usual install folders, so a JDK installed a minute ago works before PATH refreshes."""
+    return _jdk_tool("java")
 
 
 def ensure_bridge(forge_dir):
@@ -198,7 +203,7 @@ class Match:
         log = open(self.log_path, "w", encoding="utf-8")
         cp = os.pathsep.join([find_jar(forge_dir), BRIDGE_CLASSES])
         self._proc = subprocess.Popen(
-            ["java", "-Xmx4096m", "-cp", cp, "goldfish.Bridge", str(self.port),
+            [java_exe() or "java", "-Xmx4096m", "-cp", cp, "goldfish.Bridge", str(self.port),
              os.path.join(EXPORT_DIR, your_deck), os.path.join(EXPORT_DIR, bot_deck), player_name],
             cwd=forge_dir, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, creationflags=NO_WINDOW,
             env={**os.environ, **(env or {})})
@@ -260,7 +265,7 @@ class Sim:
         self.tail, self.done, self.error = [], False, None
         self._turn, self._reason = 0, None
         self._cancelled = False
-        cmd = ["java", "-Xmx4096m", "-jar", find_jar(forge_dir), "sim",
+        cmd = [java_exe() or "java", "-Xmx4096m", "-jar", find_jar(forge_dir), "sim",
                "-D", EXPORT_DIR + os.sep, "-d", *deck_files,
                "-f", "Commander", "-n", str(games), "-c", str(clock)]
         self._proc = subprocess.Popen(cmd, cwd=forge_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
