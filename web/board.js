@@ -67,16 +67,22 @@ const artCrop = (url) => url && url.replace('/normal/', '/art_crop/');
 
 // ---- FLIP animation: cards keep their Forge id across zones, so we can slide them from old to new spot ----
 let rects = new Map();
+const ZONES = '.g-hand, .g-field.me, .g-field.opp, .g-stack, .g-opphand, .g-bar.me .g-cmd, .g-bar.opp .g-cmd, .tray, .d-panel';
+const zoneOf = (el) => { const z = el.closest(ZONES); return z ? z.className + (z.closest('.g-bar.opp') ? ' opp' : '') : ''; };
 function snapshotRects() {
   rects = new Map();
-  document.querySelectorAll('#view-game [data-cid]').forEach((el) => rects.set(el.dataset.cid, el.getBoundingClientRect()));
+  document.querySelectorAll('#view-game [data-cid]').forEach((el) => rects.set(el.dataset.cid, { r: el.getBoundingClientRect(), zone: zoneOf(el) }));
 }
 function playFlip() {
   if (!rects.size) return;
   document.querySelectorAll('#view-game [data-cid]').forEach((el) => {
-    const before = rects.get(el.dataset.cid);
+    const was = rects.get(el.dataset.cid);
     const after = el.getBoundingClientRect();
     if (!after.width) return;
+    // Only cards that changed zone (hand -> stack -> battlefield -> ...) glide; a card that merely shifted because
+    // something else changed size snaps into place, so the board doesn't wobble on every update.
+    if (was && was.zone === zoneOf(el)) return;
+    const before = was?.r;
     if (!before) { // new to the visible board (drawn, created, revealed)
       el.animate([{ opacity: 0, transform: 'scale(.85)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' });
       return;
@@ -102,7 +108,7 @@ function Card({ c, opts = {}, s, onClick, noClick }) {
   const cls = ['gc', ...flags, c.hidden && 'back', targeted && 'targeted', c.phasedOut && 'phased'].filter(Boolean).join(' ');
   const click = noClick ? undefined : (onClick || (() => act('card', { id: c.id })));
   return html`
-    <div class=${'gc-slot' + (c.tapped ? ' tapped' : '') + (c.attacking ? ' attacking' : '')} data-cid=${opts.flip === false ? undefined : c.id} title=${opts.title}>
+    <div class=${'gc-slot' + (c.tapped ? ' tapped' : '') + (c.attacking ? ' attacking' : '')} data-cid=${opts.flip === false ? undefined : opts.cid || c.id} title=${opts.title}>
       <div class=${cls} onClick=${click} onMouseEnter=${(e) => showPreview(c, e.currentTarget)} onMouseLeave=${hidePreview}>
         ${c.hidden ? null : img ? html`<img src=${img} alt=${c.name} draggable="false" />`
           : html`<div class="gc-text"><b>${c.name}</b><small>${c.type}</small><p>${plain(c.text)}</p></div>`}
@@ -148,14 +154,21 @@ function Battlefield({ p, s, blocks }) {
   // group identical lands so a 37-land Commander board stays readable
   const groups = [];
   for (const c of p.battlefield.filter((c) => c.land && !onHost(c))) {
-    const key = [c.name, c.tapped, c.selectable, c.highlighted, c.playable, c.manaSource].join('|');
+    const key = [c.name, c.tapped].join('|'); // not highlights, which change every prompt and would regroup the lands
     const g = groups.find((x) => x.key === key && !c.attachedTo && !Object.keys(c.counters || {}).length);
     if (g) g.cards.push(c); else groups.push({ key, cards: [c] });
   }
   return html`<div class=${'g-field ' + (p.local ? 'me' : 'opp')}>
     <div class="g-row">${nonLands.map((c) => html`<${Permanent} key=${c.id} c=${c} s=${s} blocks=${blocks[c.id]}
       attached=${everything.filter((a) => a.attachedTo === c.id)} />`)}</div>
-    <div class="g-row lands">${groups.map((g) => html`<${Card} key=${g.cards[0].id} c=${g.cards[0]} s=${s} opts=${{ count: g.cards.length }} />`)}</div>
+    <div class="g-row lands">${groups.map((g, i) => {
+      // show the group as able to act if any land in it can, and send the click to that land
+      const act1 = g.cards.find((c) => c.selectable || c.manaSource || c.playable || c.highlighted) || g.cards[0];
+      const shown = { ...act1, selectable: g.cards.some((c) => c.selectable), playable: g.cards.some((c) => c.playable),
+        highlighted: g.cards.some((c) => c.highlighted), manaSource: Math.max(0, ...g.cards.map((c) => c.manaSource || 0)) };
+      const gid = g.cards.length > 1 ? `land:${g.key}:${groups.slice(0, i).filter((x) => x.key === g.key).length}` : undefined;
+      return html`<${Card} key=${gid || g.cards[0].id} c=${shown} s=${s} opts=${{ count: g.cards.length, cid: gid }} />`;
+    })}</div>
   </div>`;
 }
 
@@ -543,6 +556,17 @@ const BOARD_TIPS = [
   { sel: '.d-foot', title: 'Game settings', text: `Jace's speed, when the game should stop for you (default: only when it matters), and auto-pay for mana. The log above shows everything that happened.` },
 ];
 
+// Each commander's art behind its half of the board, darkened like the Home banner.
+function Backdrop({ top, bottom }) {
+  const url = (c) => c && !c.hidden && G.images[c.name] && artCrop(G.images[c.name]);
+  const t = url(top), b = url(bottom);
+  return html`<div class="g-backdrop">
+    ${t && html`<div class="bd top" key=${t} style=${{ backgroundImage: `url("${t}")` }}></div>`}
+    ${b && html`<div class="bd bottom" key=${b} style=${{ backgroundImage: `url("${b}")` }}></div>`}
+    <div class="bd-shade"></div>
+  </div>`;
+}
+
 // ---- the whole game view ----
 function Game() {
   const [st, setSt] = useState({ s: null, error: null });
@@ -616,6 +640,7 @@ function Game() {
 
   return html`<div class=${'g-wrap' + (wide ? ' wide' : '') + (s.gameOver ? ' over' : '')}>
     <div class="g-board">
+      <${Backdrop} top=${opp.command.find((c) => c.commander) || opp.command[0]} bottom=${me.command.find((c) => c.commander) || me.command[0]} />
       <${PlayerBar} p=${opp} s=${s} onZone=${(p, z) => ui.set({ zone: { player: p.id, zone: z } })} />
       <${Battlefield} p=${opp} s=${s} blocks=${blocks} />
       <${Lane} s=${s} me=${me} action=${action} />
