@@ -21,6 +21,9 @@ _cache = None
 _last = 0.0
 
 
+CACHE_VERSION = 3  # 3: prefer non-Universes Beyond printings for art (Scryfall's is:ub)
+
+
 def _load():
     global _cache
     if _cache is None:
@@ -29,6 +32,8 @@ def _load():
                 _cache = json.load(f)
         except (OSError, ValueError):
             _cache = {}
+        if _cache.get("__version__") != CACHE_VERSION:  # older cache: look cards up again with the current rules
+            _cache = {"__version__": CACHE_VERSION}
     return _cache
 
 
@@ -55,6 +60,36 @@ def _request(path, body=None):
         raise
     finally:
         _last = time.time()
+
+
+def _non_ub_printings(cards):
+    """{card name: its newest regular (non-Universes Beyond, paper) printing} for these cards, found with a few batched
+    searches. Cards that only exist as Universes Beyond are missing from the result and keep their own art."""
+    out, batch, size = {}, [], 0
+
+    def flush():
+        if not batch:
+            return
+        q = "-is:ub -is:digital game:paper (" + " or ".join(f'!"{n}"' for n in batch) + ")"
+        path = "/cards/search?" + urllib.parse.urlencode({"q": q, "unique": "cards", "order": "released", "dir": "desc"})
+        while path:
+            res = _request(path)
+            if not res:
+                break
+            for c in res.get("data", []):
+                if c.get("image_uris") or c.get("card_faces"):
+                    out[c["name"]] = c
+            path = res["next_page"].replace(API, "") if res.get("has_more") else None
+        batch.clear()
+
+    for name in sorted({c["name"] for c in cards}):
+        if size + len(name) > 800:
+            flush()
+            size = 0
+        batch.append(name.replace('"', ""))
+        size += len(name) + 8
+    flush()
+    return out
 
 
 def _slim(c):
@@ -95,14 +130,16 @@ def lookup(names):
     missing = sorted({n for n in names if n.lower() not in cache}, key=str.lower)
     for i in range(0, len(missing), 75):
         res = _request("/cards/collection", {"identifiers": [{"name": n} for n in missing[i:i + 75]]})
-        for c in res.get("data", []):
-            _store(c["name"], c)
+        found = res.get("data", [])
+        better = _non_ub_printings(found)  # skip Universes Beyond art when a regular printing exists
+        for c in found:
+            _store(c["name"], better.get(c["name"], c))
     not_found = []
     for n in missing:
         if n.lower() not in cache:
             c = _request("/cards/named?" + urllib.parse.urlencode({"fuzzy": n}))
             if c:
-                _store(n, c)
+                _store(n, _non_ub_printings([c]).get(c["name"], c))
             else:
                 not_found.append(n)
     if missing:
