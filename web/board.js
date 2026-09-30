@@ -315,15 +315,37 @@ function DecisionPanel({ s }) {
     <div class="d-title">${cmdZone ? `Your commander ${name} left play` : 'Decision'}</div>
     ${p.card && html`<div class="d-card"><${Card} c=${p.card} s=${s} noClick opts=${{ flip: false }} /></div>`}
     <div class="d-msg">${cmdZone ? 'It went to your graveyard or exile. Move it to the command zone (so you can recast it), or leave it where it is?' : tidy(p.message)}</div>
-    <div class="d-btns">
+    ${twoColors(p) ? html`<div class="mana-choices">${[['ok', p.ok], ['cancel', p.cancel]].map(([k, l]) => html`<button title=${l} onClick=${() => act(k)}>
+        <i class="pip-lg" style=${{ background: MANA_BG[manaSymbols(l)[0]] }}>${manaSymbols(l)[0]}</i></button>`)}</div>`
+    : html`<div class="d-btns">
       ${p.cancelOn && html`<button onClick=${() => act('cancel')}>${cmdZone ? 'Leave it' : p.cancel}</button>`}
       <button class="primary" onClick=${() => act('ok')}>${cmdZone ? 'Command zone' : p.ok}</button>
-    </div></div>`;
+    </div>`}</div>`;
 }
+// A land that could make either of two colours asks through a yes/no prompt whose buttons are the colours.
+const twoColors = (p) => p.cancelOn && manaSymbols(p.ok || '').length === 1 && manaSymbols(p.cancel || '').length === 1
+  && COLOR_WORDS[(p.ok || '').trim().toLowerCase()] && COLOR_WORDS[(p.cancel || '').trim().toLowerCase()];
 
 // Short questions fit beside the hand; card choices, long lists and damage division need the dock.
-const compactAsk = (a) => a.kind === 'options' || a.kind === 'number' || a.kind === 'input'
+const compactAsk = (a, s) => a.kind === 'options' || a.kind === 'number' || a.kind === 'input' || !!manaChoice(a, s)
   || (a.kind === 'choose' && !a.items.some((it) => it.card) && a.items.length <= 6);
+
+// Mana choices while paying (which ability of a dual/tri land, or which colour a Command Tower/Citadel makes)
+// all become one row of coloured mana buttons in the action bar, next to the payment.
+const COLOR_WORDS = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G', colorless: 'C' };
+function manaSymbols(label) {
+  const after = /add(.*)/i.exec(label)?.[1] ?? label;
+  const syms = [...after.matchAll(/\{([WUBRGC])\}/g)].map((m) => m[1]);
+  if (syms.length) return syms;
+  const t = label.trim().toLowerCase();
+  const word = COLOR_WORDS[t] || (/^[wubrgc]$/.test(t) ? t.toUpperCase() : null);
+  return word ? [word] : [];
+}
+function manaChoice(a, s) {
+  if (a.kind !== 'choose' || a.max !== 1 || !/^InputPayMana/.test(s?.prompt?.input || '')) return null;
+  const syms = a.items.map((it) => manaSymbols(it.label));
+  return syms.every((x) => x.length) ? syms : null;
+}
 
 // Questions Forge asks (choices, confirms, numbers, damage division).
 function AskPanel({ a, s }) {
@@ -339,6 +361,13 @@ function AskPanel({ a, s }) {
     return html`<div class="d-panel ask">${head}
       ${a.card && html`<div class="d-card"><${Card} c=${a.card} s=${s} noClick opts=${{ flip: false }} /></div>`}
       <div class="d-btns wrap">${a.options.map((o, i) => html`<button class=${i === 0 ? 'primary' : ''} onClick=${() => reply(i)}>${o}</button>`)}</div></div>`;
+  }
+  const mana = manaChoice(a, s);
+  if (mana) {
+    return html`<div class="d-panel ask mana-ask">${head}
+      <div class="mana-choices">${a.items.map((it, i) => html`<button title=${it.label} onClick=${() => reply([i])}>
+        ${mana[i].map((c) => html`<i class="pip-lg" style=${{ background: MANA_BG[c] || '#ccc' }}>${c}</i>`)}</button>`)}</div>
+      ${a.min === 0 && html`<div class="d-btns"><button onClick=${() => reply([])}>Cancel</button></div>`}</div>`;
   }
   if (a.kind === 'choose') {
     const single = a.max === 1 && !a.ordered;
@@ -569,7 +598,7 @@ function Game() {
   const deciding = /^InputConfirm/.test(s.prompt.input || '') && s.prompt.input !== 'InputConfirmMulligan' && !s.ask && s.prompt.okOn;
   const zone = ui.zone && html`<${ZonePanel} zone=${ui.zone} s=${s} onClose=${() => ui.set({ zone: null })} />`;
   // Short questions and the main buttons sit beside your hand; card choices and the review get the dock's room.
-  const bigAsk = s.ask && !compactAsk(s.ask);
+  const bigAsk = s.ask && !compactAsk(s.ask, s);
   // While passing ahead, only the steps being passed show the "Passing…" panel; blocks and questions still show.
   const skipping = s.skip && !s.ask && !deciding && (!s.prompt.input || /^(InputPassPriority|InputAttack)$/.test(s.prompt.input));
   const bar = s.gameOver ? html`<div class="d-panel over-bar"><div class="d-title">${s.winner ? (me.name === s.winner ? '🏆 You win!' : `${s.winner} wins`) : 'Draw'}</div>
