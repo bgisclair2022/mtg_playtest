@@ -217,6 +217,11 @@ $('#open-moxfield').onclick = async () => {
 // ---- Forge: play & simulate ----
 const pick = (id) => JSON.parse($(id).value || 'null');
 
+$('#play-game').onclick = () => {
+  if (!pick('#you-deck') || !pick('#bot-deck')) return toast('Pick both decks first.', true);
+  startGame(pick('#you-deck'), pick('#bot-deck')); // board.js
+};
+
 $('#play-forge').onclick = async () => {
   if (!pick('#you-deck') || !pick('#bot-deck')) return toast('Pick both decks first.', true);
   const done = busy($('#play-forge'), 'Exporting…');
@@ -321,6 +326,8 @@ $('#install-forge').onclick = async () => {
 window.addEventListener('pywebviewready', async () => {
   api = window.pywebview.api;
   await refreshDecks();
+  $('#splash').classList.add('gone');
+  setTimeout(() => $('#splash').remove(), 400);
   const s = await call('settings');
   if (s.username) showUser(s.username); else askName(true);
   if (!s.forge_ok) toast('Forge is not set up yet. See the Settings tab.');

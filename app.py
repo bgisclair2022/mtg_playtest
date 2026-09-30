@@ -6,6 +6,7 @@ through window.pywebview.api.
 import functools
 import importlib.util
 import json
+import mimetypes
 import os
 import sys
 import time
@@ -278,6 +279,8 @@ def main():
     if sys.stderr is None:
         os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
         sys.stdout = sys.stderr = open(os.path.join(ROOT, "data", "app.log"), "a", encoding="utf-8", buffering=1)
+    # The board is an ES module; some Windows registries map .js to text/plain, which WebView2 refuses to run.
+    mimetypes.add_type("text/javascript", ".js")
     api = Api()
     window = webview.create_window("MTG Goldfish", os.path.join(ROOT, "web", "index.html"), js_api=api,
                                    width=1400, height=900, min_size=(1000, 650), maximized=True)

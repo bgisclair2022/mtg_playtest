@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="splash"><img src="img/icon.png" alt=""><h1>MTG Goldfish</h1><div class="spinner"></div></div>
 <header>
   <h1>MTG Goldfish</h1>
   <nav>
@@ -120,59 +121,14 @@
   </section>
 </main>
 
-<!-- In-app game (Forge engine via bridge) -->
-<section id="view-game" hidden>
-  <div id="g-board">
-    <div id="g-opp" class="g-player opp"></div>
-    <div id="g-center">
-      <div id="g-turn"></div>
-      <div id="g-phases"></div>
-      <div id="g-stack"></div>
-      <div id="g-prompt">
-        <div id="g-promptcard"></div>
-      <div id="g-msg"></div>
-        <div id="g-btns">
-          <button id="g-extra" hidden></button>
-          <button id="g-cancel"></button>
-          <button id="g-ok" class="primary"></button>
-        </div>
-      </div>
-    </div>
-    <div id="g-me" class="g-player me"></div>
-    <div id="g-hand"></div>
-  </div>
-  <aside id="g-side">
-    <div id="g-preview"><div class="muted">Hover a card to see it here.</div></div>
-    <label class="g-toggle">Jace's speed
-      <select id="g-speed">
-        <option value="7000">Slow</option>
-        <option value="4000" selected>Normal</option>
-        <option value="2000">Fast</option>
-        <option value="0">Instant</option>
-      </select>
-    </label>
-    <label class="g-toggle"><input type="checkbox" id="g-autopass" checked> Auto-pass steps where I have nothing to play</label>
-    <label class="g-toggle"><input type="checkbox" id="g-autopay"> Auto-pay mana (untick to choose lands)</label>
-    <div id="g-log"></div>
-    <div class="row">
-      <button id="g-concede" class="danger">Concede</button>
-      <button id="g-leave">Leave game</button>
-    </div>
-  </aside>
-  <div id="g-ask" hidden><div class="g-ask-box"></div></div>
-  <div id="g-loading"><div class="spinner"></div><div id="g-loading-msg">Starting Forge…</div></div>
-  <div id="g-toasts"></div>
-  <div id="g-action" hidden></div>
-  <div id="g-trigger" hidden></div>
-  <div id="g-combat" hidden></div>
-  <div id="g-tray" hidden></div>
-  <div id="g-decide" hidden></div>
-</section>
+<!-- In-app game (Forge engine via bridge), rendered by board.js -->
+<section id="view-game" hidden></section>
+<div id="g-preview" hidden></div>
 
 <div id="modal" hidden><div class="modal-box"></div></div>
 <div id="preview" hidden></div>
 <link rel="stylesheet" href="game.css">
 <script src="app.js"></script>
-<script src="game.js"></script>
+<script type="module" src="board.js"></script>
 </body>
 </html>
