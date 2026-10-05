@@ -284,7 +284,11 @@ function Lane({ s, me, action }) {
         ${s.gameOver ? `Game over · ${s.winner ? `${s.winner} wins` : 'draw'} in round ${s.round}`
           : s.mulligan || !s.turn ? 'Game start' : `Round ${s.round} · ${myTurn ? 'Your' : `${botName(s)}'s`} turn`}
         ${s.dayNight === 'day' ? ' · ☀ Day' : s.dayNight === 'night' ? ' · ☾ Night' : ''}</div>
-      <div class="g-phases">${PHASES.map(([label, keys]) => html`<span class=${!s.gameOver && keys.includes(s.phaseKey) ? 'on' : ''}>${label}</span>`)}</div>
+      ${s.loop && !s.gameOver ? html`<div class=${'loop-bar' + (s.loop.paused ? ' paused' : '')} title=${`${s.loop.label}. An infinite loop plays out by itself until something changes; a mandatory loop that never ends is a draw (CR 104.4b).`}>
+        <div><b>∞ Loop</b> · cycle ${s.loop.cycles}</div><span>${s.loop.label}</span>
+        ${s.loop.paused ? html`<button onClick=${() => act('loop', { value: 'run' })}>Fast-forward</button>`
+          : html`<button onClick=${() => act('loop', { value: 'stop' })}>Stop to respond</button>`}</div>`
+      : html`<div class="g-phases">${PHASES.map(([label, keys]) => html`<span class=${!s.gameOver && keys.includes(s.phaseKey) ? 'on' : ''}>${label}</span>`)}</div>`}
     </div>
     <div class="g-stack">
       ${s.stack.length ? [...s.stack].sort((a, b) => (b === top) - (a === top)).map((it) => html`<div key=${it.id} class=${'st' + (it.trigger ? ' trigger' : '') + (it === top ? ' top' : '') + (it.mine ? ' mine' : '')}>

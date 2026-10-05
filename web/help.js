@@ -46,7 +46,8 @@ const SECTIONS = [
       <li><b>At every step</b>: never passes for you.</li>
     </ul>
     <p><b>To my turn</b> passes everything until your next main phase. <b>Pass turn</b> (${K('Shift')}+${K('Space')}) passes until the turn ends. Both still stop for blocks and anything you must choose, and <b>Stop</b> cancels them.</p>
-    <p>When something is on the stack you'll see <b>Pass priority</b> (let it resolve) or <b>Respond</b> (then click a glowing card).</p>` },
+    <p>When something is on the stack you'll see <b>Pass priority</b> (let it resolve) or <b>Respond</b> (then click a glowing card).</p>
+    <p><b>Infinite loops.</b> When the same triggers or abilities keep going on the stack cycle after cycle (say Exquisite Blood with Sanguine Bond), an <b>∞ Loop</b> banner appears in the lane and the loop plays out at full speed until it ends, for example when a player's life hits 0. Click <b>Stop to respond</b> to get priority back mid-loop and break it; <b>Fast-forward</b> resumes it. If no player can stop a loop of mandatory triggers and it changes nothing, or it is still going after 500 cycles, the game is a draw (CR 104.4b). A loop you drive with your own spells and abilities is yours to stop, so it's never fast-forwarded.</p>` },
   { id: 'mana', title: 'Casting & paying mana', body: html`
     <p>Click a green card to cast it or use its ability. Then pay: click lands and other mana sources (gold), or spend floating mana by clicking its symbol in your pool. Tick <b>Auto-pay mana</b> in the dock to let Forge pick the lands for you.</p>` },
   { id: 'combat', title: 'Combat', body: html`

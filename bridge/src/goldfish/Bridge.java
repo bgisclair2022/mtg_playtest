@@ -275,6 +275,7 @@ public final class Bridge {
 
         @Subscribe
         public void receive(GameEvent ev) {
+            gui.loops.observe(ev);
             if (ev instanceof GameEventSpellAbilityCast e && e.si() != null && e.si().isTrigger()) {
                 return; // triggers are announced by the board's "Trigger!" pop-up and paced in maybeAutoPass
             } else if (ev instanceof GameEventSpellAbilityCast e && e.si() != null && isBot(e.si().getActivatingPlayer())) {
@@ -326,6 +327,155 @@ public final class Bridge {
         }
     }
 
+    // ---- infinite loops ----------------------------------------------------------
+
+    /**
+     * Spots a loop on the stack (the same items going on at the same depth, cycle after cycle) and plays it out at
+     * full speed, so it reaches its outcome (someone's life hits 0, a library runs out...) instead of crawling one
+     * paced, clickable trigger at a time. A loop of mandatory triggers that changes nothing, or that is still going
+     * after {@link #LIMIT} cycles, can't end the game: that's a draw (CR 104.4b). Loops you drive with your own
+     * spells and abilities are yours to stop (CR 732.4), so they're left alone.
+     */
+    static final class LoopWatch {
+        static final int REPEATS = 3;   // identical cycles of triggers in a row before it counts as a loop
+        static final int BOT_REPEATS = 5; // ...or of cycles that include the bot's own spells/abilities (it may just be pumping)
+        static final int MAX_PERIOD = 12;
+        static final int LIMIT = Integer.getInteger("goldfish.loopLimit", 500);
+        private final WebGui gui;
+        private final List<String> chain = new ArrayList<>(); // stack entries this step: who|kind|card|text|depth
+        private final List<String> names = new ArrayList<>();
+        private int period, mark, cycles, unchanged;
+        private boolean mandatory;
+        private String last;
+        volatile boolean running, paused;
+        volatile String label = "";
+
+        LoopWatch(WebGui gui) {
+            this.gui = gui;
+        }
+
+        /** Playing a loop out quickly right now (detected, and you haven't stopped it to respond). */
+        boolean fast() {
+            return running && !paused;
+        }
+
+        int cycles() {
+            return cycles;
+        }
+
+        void observe(GameEvent ev) {
+            if (ev instanceof forge.game.event.GameEventTurnPhase) {
+                reset();
+                return;
+            }
+            if (!(ev instanceof GameEventSpellAbilityCast e) || e.si() == null) {
+                return;
+            }
+            final StackItemView si = e.si();
+            final PlayerView who = si.getActivatingPlayer();
+            final boolean bot = who != null && who.isAI();
+            chain.add((who == null ? "?" : who.getId()) + "|" + (si.isTrigger() ? "T" : bot ? "B" : "Y") + "|"
+                    + Pacer.name(si.getSourceCard()) + "|" + si.getText() + "|" + e.stackIndex());
+            names.add(Pacer.name(si.getSourceCard()));
+            if (chain.size() > 4 * MAX_PERIOD * BOT_REPEATS) { // only the recent past matters
+                final int drop = chain.size() - 2 * MAX_PERIOD * BOT_REPEATS;
+                chain.subList(0, drop).clear();
+                names.subList(0, drop).clear();
+                mark -= drop;
+            }
+            final int n = chain.size();
+            if (running) {
+                if (!chain.get(n - 1).equals(chain.get(n - 1 - period))) {
+                    reset(); // something new happened: the loop is over
+                    gui.bump();
+                } else if (n - mark >= period) {
+                    mark = n;
+                    cycle(e);
+                }
+                return;
+            }
+            for (int p = 1; p <= MAX_PERIOD && p * REPEATS <= n; p++) {
+                final List<String> cycle = chain.subList(n - p, n);
+                // Your own spells and abilities: you choose how many times to repeat them (CR 732.4).
+                if (cycle.stream().anyMatch(k -> k.contains("|Y|"))) {
+                    continue;
+                }
+                final int need = cycle.stream().anyMatch(k -> k.contains("|B|")) ? BOT_REPEATS : REPEATS;
+                boolean repeats = p * need <= n;
+                for (int i = n - p * (need - 1); i < n && repeats; i++) {
+                    repeats = chain.get(i).equals(chain.get(i - p));
+                }
+                if (repeats) {
+                    period = p;
+                    mark = n;
+                    cycles = need;
+                    unchanged = 0;
+                    last = null;
+                    mandatory = cycle.stream().allMatch(k -> k.contains("|T|"));
+                    running = true;
+                    paused = false;
+                    label = String.join(" ↔ ", new java.util.LinkedHashSet<>(names.subList(n - p, n)));
+                    gui.notice("Infinite loop: " + label + ". Playing it out until something changes"
+                            + (mandatory ? " (if nothing can, the game is a draw)." : "."));
+                    gui.bump();
+                    return;
+                }
+            }
+        }
+
+        /** One more full cycle: check whether the loop is going anywhere. */
+        private void cycle(GameEventSpellAbilityCast e) {
+            cycles++;
+            final forge.game.Game game = gui.getGameView() == null ? null : gui.getGameView().getGame();
+            if (game == null || game.isGameOver()) {
+                return;
+            }
+            final String now = progress(game);
+            unchanged = now.equals(last) ? unchanged + 1 : 0;
+            last = now;
+            final boolean stuck = mandatory && unchanged >= 3; // mandatory, and each cycle leaves the game exactly as it was
+            if (stuck || cycles >= LIMIT) {
+                final String why = "Infinite loop (" + label + ") " + (stuck ? "changes nothing" : "was still going after " + cycles + " cycles")
+                        + " and no player can stop it: the game is a draw (CR 104.4b).";
+                game.getGameLog().add(GameLogEntryType.GAME_OUTCOME, why);
+                gui.notice(why);
+                running = false;
+                game.getPlayers().forEach(Player::intentionalDraw); // otherwise Forge names whoever hasn't lost the winner
+                game.setGameOver(forge.game.GameEndReason.Draw);
+                gui.bump();
+            } else if (cycles % 10 == 0) {
+                gui.bump(); // keep the banner's count moving
+            }
+        }
+
+        /** Everything a loop could be making progress on: life, poison, mana, zone sizes, creature sizes and counters. */
+        private static String progress(forge.game.Game game) {
+            final StringBuilder b = new StringBuilder();
+            for (Player p : game.getPlayers()) {
+                b.append(p.getLife()).append(',').append(p.getPoisonCounters()).append(',').append(p.getManaPool().totalMana())
+                        .append(',').append(p.getCounters());
+                for (ZoneType z : new ZoneType[] {ZoneType.Hand, ZoneType.Library, ZoneType.Graveyard, ZoneType.Exile, ZoneType.Battlefield}) {
+                    b.append(',').append(p.getZone(z).size());
+                }
+                for (Card c : p.getCardsIn(ZoneType.Battlefield)) {
+                    b.append(',').append(c.getNetPower()).append('/').append(c.getNetToughness()).append(c.getCounters());
+                }
+                b.append(';');
+            }
+            return b.toString();
+        }
+
+        private void reset() {
+            chain.clear();
+            names.clear();
+            mark = 0;
+            if (running) {
+                running = false;
+                paused = false;
+            }
+        }
+    }
+
     // ---- the GUI Forge talks to ------------------------------------------------
 
     /** Mana pool colors as the board names them, and the ManaAtom values Forge keys the pool by. */
@@ -356,6 +506,7 @@ public final class Bridge {
         private final Set<Integer> seenTriggers = ConcurrentHashMap.newKeySet();
         private volatile boolean holding;
         private volatile int untappedSources = -1;
+        final LoopWatch loops = new LoopWatch(this);
 
         private boolean gv0HasStack() {
             final GameView gv = getGameView();
@@ -389,11 +540,16 @@ public final class Bridge {
         // -- change tracking / long-poll
 
         private void bump() {
+            publish();
+            timer.schedule(this::maybeAutoPass, loops.fast() ? 5 : 250, TimeUnit.MILLISECONDS);
+        }
+
+        /** A new snapshot for the board, without re-running the auto-pass check. */
+        private void publish() {
             synchronized (lock) {
                 version++;
                 lock.notifyAll();
             }
-            timer.schedule(this::maybeAutoPass, 250, TimeUnit.MILLISECONDS);
         }
 
         void awaitChange(long since, long timeoutMs) {
@@ -416,7 +572,11 @@ public final class Bridge {
         /** Take the clicks you'd always make anyway: auto-pay mana costs, and pass priority on the bot's turn. */
         private void maybeAutoPass() {
             try {
+                final boolean before = holding;
                 decideAutoPass();
+                if (holding != before) {
+                    publish(); // the board's "you can respond" / "resolving…" must follow, not wait for the next game change
+                }
             } catch (RuntimeException e) {
                 System.out.println("auto-pass check failed, retrying: " + e);
                 timer.schedule(this::maybeAutoPass, 300, TimeUnit.MILLISECONDS);
@@ -457,6 +617,11 @@ public final class Bridge {
                 return;
             }
             final StackItemView top = gv.peekStack();
+            if (top != null && loops.fast()) { // a loop is playing itself out: pass straight away
+                holding = false;
+                passLater(top.getId(), 0);
+                return;
+            }
             if (top == null) {
                 // A step or phase with an empty stack: you have priority in it (CR 117.3a). Your main phases
                 // always wait for you. Elsewhere, hold if you have an instant-speed play; otherwise show the
@@ -623,6 +788,22 @@ public final class Bridge {
                     autoPay = a.get("value").getAsBoolean();
                     bump();
                 }
+                case "devstate" -> { // tests only (GOLDFISH_DEV set): load a Forge game-state file, like Forge's dev mode
+                    final GameView g = getGameView();
+                    if (System.getenv("GOLDFISH_DEV") != null && g != null) {
+                        try {
+                            final forge.game.GameState st = new forge.game.GameState();
+                            st.parse(java.nio.file.Files.readAllLines(java.nio.file.Path.of(a.get("path").getAsString())));
+                            g.getGame().getAction().invoke(() -> st.applyToGame(g.getGame()));
+                        } catch (Exception e) {
+                            notice("Couldn't load the game state: " + e);
+                        }
+                    }
+                }
+                case "loop" -> { // "stop": hold priority in the loop so you can respond; "run": play it out again
+                    loops.paused = "stop".equals(a.get("value").getAsString());
+                    bump();
+                }
                 default -> { }
             }
         }
@@ -651,6 +832,9 @@ public final class Bridge {
 
         /** Publish what the bot just did, then hold the game thread so you can take it in. */
         void pace(String text, CardView card, double weight) {
+            if (loops.fast()) {
+                return; // the loop banner says what's happening; no pause per iteration
+            }
             synchronized (lock) {
                 final JsonObject a = new JsonObject();
                 a.addProperty("id", ++actionSeq);
@@ -758,6 +942,13 @@ public final class Bridge {
             o.addProperty("stops", !autoPass ? "all" : everyStep ? "held" : "smart");
             o.addProperty("skip", skipFromTurn < 0 ? "" : skipToMyTurn ? "myturn" : "turn");
             o.addProperty("holding", holding); // true while the bridge waits for you because you have a play
+            if (loops.running) {
+                final JsonObject l = new JsonObject();
+                l.addProperty("label", loops.label);
+                l.addProperty("cycles", loops.cycles());
+                l.addProperty("paused", loops.paused);
+                o.add("loop", l);
+            }
 
             final GameView gv = getGameView();
             if (gv == null) {
