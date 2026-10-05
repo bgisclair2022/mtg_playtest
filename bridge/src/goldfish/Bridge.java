@@ -340,6 +340,8 @@ public final class Bridge {
         static final int REPEATS = 3;   // identical cycles of triggers in a row before it counts as a loop
         static final int BOT_REPEATS = 5; // ...or of cycles that include the bot's own spells/abilities (it may just be pumping)
         static final int MAX_PERIOD = 12;
+        // Forge's stack text names cards with their id, e.g. "Zealous Conscripts (211)": a new token each cycle
+        static final java.util.regex.Pattern CARD_ID = java.util.regex.Pattern.compile("\\s*\\(\\d+\\)");
         static final int LIMIT = Integer.getInteger("goldfish.loopLimit", 500);
         private final WebGui gui;
         private final List<String> chain = new ArrayList<>(); // stack entries this step: who|kind|card|text|depth
@@ -349,6 +351,7 @@ public final class Bridge {
         private String last;
         volatile boolean running, paused;
         volatile String label = "";
+        volatile String yours; // a loop you're driving with your own spells/abilities (offer the repeat shortcut)
 
         LoopWatch(WebGui gui) {
             this.gui = gui;
@@ -375,7 +378,7 @@ public final class Bridge {
             final PlayerView who = si.getActivatingPlayer();
             final boolean bot = who != null && who.isAI();
             chain.add((who == null ? "?" : who.getId()) + "|" + (si.isTrigger() ? "T" : bot ? "B" : "Y") + "|"
-                    + Pacer.name(si.getSourceCard()) + "|" + si.getText() + "|" + e.stackIndex());
+                    + Pacer.name(si.getSourceCard()) + "|" + CARD_ID.matcher(String.valueOf(si.getText())).replaceAll("") + "|" + e.stackIndex());
             names.add(Pacer.name(si.getSourceCard()));
             if (chain.size() > 4 * MAX_PERIOD * BOT_REPEATS) { // only the recent past matters
                 final int drop = chain.size() - 2 * MAX_PERIOD * BOT_REPEATS;
@@ -394,16 +397,20 @@ public final class Bridge {
                 }
                 return;
             }
-            for (int p = 1; p <= MAX_PERIOD && p * REPEATS <= n; p++) {
+            for (int p = 1; p <= MAX_PERIOD && 2 * p <= n; p++) { // twice is enough to offer your own loop's shortcut
                 final List<String> cycle = chain.subList(n - p, n);
-                // Your own spells and abilities: you choose how many times to repeat them (CR 732.4).
-                if (cycle.stream().anyMatch(k -> k.contains("|Y|"))) {
-                    continue;
-                }
-                final int need = cycle.stream().anyMatch(k -> k.contains("|B|")) ? BOT_REPEATS : REPEATS;
+                // Your own spells and abilities: you choose how many times to repeat them (CR 732.4), so the
+                // board offers to repeat it for you (WebGui.repeat) rather than playing it out.
+                final boolean mine = cycle.stream().anyMatch(k -> k.contains("|Y|"));
+                final int need = mine ? 2 : cycle.stream().anyMatch(k -> k.contains("|B|")) ? BOT_REPEATS : REPEATS;
                 boolean repeats = p * need <= n;
                 for (int i = n - p * (need - 1); i < n && repeats; i++) {
                     repeats = chain.get(i).equals(chain.get(i - p));
+                }
+                if (repeats && mine) {
+                    yours = String.join(" ↔ ", new java.util.LinkedHashSet<>(names.subList(n - p, n)));
+                    gui.findOffer();
+                    return;
                 }
                 if (repeats) {
                     period = p;
@@ -469,6 +476,7 @@ public final class Bridge {
             chain.clear();
             names.clear();
             mark = 0;
+            yours = null;
             if (running) {
                 running = false;
                 paused = false;
@@ -508,6 +516,13 @@ public final class Bridge {
         private volatile int untappedSources = -1;
         final LoopWatch loops = new LoopWatch(this);
 
+        // -- loop shortcut (CR 732.2a): your inputs, so a loop you drive can be repeated N times for you
+        private record Step(String sig, boolean answer, JsonObject act, JsonElement value, String name, String zone, String input, int depth) { }
+        private final List<Step> steps = new ArrayList<>();
+        private volatile List<Step> offer; // one cycle of your inputs, ready to repeat
+        private volatile boolean repeating;
+        private volatile int repeatDone, repeatTotal;
+
         private boolean gv0HasStack() {
             final GameView gv = getGameView();
             return gv != null && gv.peekStack() != null;
@@ -541,7 +556,7 @@ public final class Bridge {
 
         private void bump() {
             publish();
-            timer.schedule(this::maybeAutoPass, loops.fast() ? 5 : 250, TimeUnit.MILLISECONDS);
+            timer.schedule(this::maybeAutoPass, loops.fast() || repeating ? 5 : 250, TimeUnit.MILLISECONDS);
         }
 
         /** A new snapshot for the board, without re-running the auto-pass check. */
@@ -617,7 +632,7 @@ public final class Bridge {
                 return;
             }
             final StackItemView top = gv.peekStack();
-            if (top != null && loops.fast()) { // a loop is playing itself out: pass straight away
+            if (top != null && (loops.fast() || repeating)) { // a loop is playing itself out: pass straight away
                 holding = false;
                 passLater(top.getId(), 0);
                 return;
@@ -738,6 +753,9 @@ public final class Bridge {
             if (over != null && over.isGameOver() && !java.util.Set.of("speed", "autopass", "autopay").contains(type)) {
                 return; // the game is finished: nothing on the board acts any more
             }
+            if (!repeating && !a.has("replay")) {
+                record(a);
+            }
             switch (type) {
                 case "ok" -> c.selectButtonOk();
                 case "cancel" -> c.selectButtonCancel();
@@ -800,6 +818,19 @@ public final class Bridge {
                         }
                     }
                 }
+                case "repeat" -> { // repeat the loop you're driving N times; 0 stops; -1 dismisses the offer
+                    final int n = a.get("value").getAsInt();
+                    if (n > 0) {
+                        repeat(n);
+                    } else {
+                        repeating = false;
+                        if (n < 0) {
+                            offer = null;
+                            loops.yours = null;
+                        }
+                        publish();
+                    }
+                }
                 case "loop" -> { // "stop": hold priority in the loop so you can respond; "run": play it out again
                     loops.paused = "stop".equals(a.get("value").getAsString());
                     bump();
@@ -832,7 +863,7 @@ public final class Bridge {
 
         /** Publish what the bot just did, then hold the game thread so you can take it in. */
         void pace(String text, CardView card, double weight) {
-            if (loops.fast()) {
+            if (loops.fast() || repeating) {
                 return; // the loop banner says what's happening; no pause per iteration
             }
             synchronized (lock) {
@@ -858,8 +889,205 @@ public final class Bridge {
         void answer(int id, JsonElement value) {
             final Ask a = pending;
             if (a != null && a.id == id) {
+                if (!repeating) {
+                    addStep(new Step("ans|" + askSig(a.question) + "|" + value, true, null, value, "", "", "", stackDepth()));
+                }
                 a.answer.complete(value);
             }
+        }
+
+        // -- loop shortcut
+
+        private int stackDepth() {
+            final GameView gv = getGameView();
+            return gv == null || gv.getStack() == null ? 0 : gv.getStack().size();
+        }
+
+        private static String askSig(JsonObject q) {
+            return q.get("kind").getAsString() + "|" + q.get("message").getAsString();
+        }
+
+        /** Remember one of your inputs (passing priority isn't one: the bridge passes for you while repeating). */
+        private void record(JsonObject a) {
+            final String type = a.get("type").getAsString();
+            final String input = inputName();
+            if (!Set.of("card", "player", "ok", "cancel", "mana").contains(type) || "ok".equals(type) && "InputPassPriority".equals(input)) {
+                return;
+            }
+            String name = "", zone = "";
+            if ("card".equals(type)) {
+                final CardView cv = cards.get(a.get("id").getAsInt());
+                if (cv == null) {
+                    return;
+                }
+                name = Pacer.name(cv);
+                zone = String.valueOf(cv.getZone());
+            }
+            final String extra = "mana".equals(type) ? a.get("color").getAsString() : "player".equals(type) ? a.get("id").getAsString() : "";
+            final int depth = stackDepth();
+            addStep(new Step("act|" + type + "|" + name + "|" + zone + "|" + extra + "|" + input + "|" + depth, false, a.deepCopy(), null, name, zone, input, depth));
+        }
+
+        private void addStep(Step st) {
+            synchronized (steps) {
+                steps.add(st);
+                if (steps.size() > 300) {
+                    steps.subList(0, 100).clear();
+                }
+            }
+            findOffer();
+        }
+
+        /** While a loop of yours is on the stack, find the cycle in your inputs: the last k inputs, twice in a row. */
+        void findOffer() {
+            if (repeating) {
+                return;
+            }
+            List<Step> found = null;
+            synchronized (steps) {
+                final int n = steps.size();
+                for (int k = 1; loops.yours != null && k <= 40 && 2 * k <= n && found == null; k++) {
+                    boolean same = true;
+                    for (int i = 0; i < k && same; i++) {
+                        same = steps.get(n - 2 * k + i).sig().equals(steps.get(n - k + i).sig());
+                    }
+                    if (same && steps.subList(n - k, n).stream().anyMatch(st -> st.act() != null && "card".equals(st.act().get("type").getAsString()))) {
+                        found = new ArrayList<>(steps.subList(n - k, n));
+                    }
+                }
+            }
+            if (found != null || offer != null) {
+                offer = found;
+                publish();
+            }
+        }
+
+        /** Repeat the offered cycle of your inputs {@code times} times, doing each one for real (Jace still gets priority). */
+        private void repeat(int times) {
+            final List<Step> cycle = offer;
+            if (cycle == null || repeating) {
+                return;
+            }
+            repeating = true;
+            repeatDone = 0;
+            repeatTotal = times;
+            bump();
+            worker.submit(() -> {
+                String why = null;
+                try {
+                    outer:
+                    for (int r = 0; r < times; r++) {
+                        for (Step st : cycle) {
+                            if (!repeating) {
+                                why = "Stopped after " + repeatDone + " of " + times + ".";
+                                break outer;
+                            }
+                            if (!awaitStep(st) || !perform(st)) {
+                                why = getGameView() != null && getGameView().isGameOver() ? null
+                                        : "Stopped after " + repeatDone + " of " + times + ": the game didn't go the same way ("
+                                          + (st.name().isEmpty() ? "a choice" : st.name()) + ").";
+                                break outer;
+                            }
+                        }
+                        repeatDone = r + 1;
+                        publish();
+                        if (getGameView() != null && getGameView().isGameOver()) {
+                            break;
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    why = "Stopped repeating: " + e;
+                } finally {
+                    repeating = false;
+                    bump();
+                }
+                notice(why != null ? why : "Repeated the loop " + repeatDone + (repeatDone == 1 ? " time." : " times."));
+            });
+        }
+
+        /** Wait until Forge asks for this input again, in the same spot (same question, or same input at the same stack depth). */
+        private boolean awaitStep(Step st) {
+            final long end = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < end && repeating) {
+                final GameView gv = getGameView();
+                if (gv == null || gv.isGameOver()) {
+                    return false;
+                }
+                final Ask a = pending;
+                if (matches(st)) {
+                    sleep(60); // settled, not a passing moment mid-update
+                    if (matches(st)) {
+                        return true;
+                    }
+                }
+                sleep(30);
+            }
+            return false;
+        }
+
+        private boolean matches(Step st) {
+            final Ask a = pending;
+            return st.answer() ? a != null && st.sig().startsWith("ans|" + askSig(a.question) + "|")
+                    : a == null && st.input().equals(inputName()) && stackDepth() == st.depth();
+        }
+
+        private static void sleep(long ms) {
+            try {
+                Thread.sleep(ms);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        /** Do the input again: the same card if it's still there, else one with the same name in the same zone (a new token, say). */
+        private boolean perform(Step st) {
+            final long before;
+            synchronized (lock) {
+                before = version;
+            }
+            if (st.answer()) {
+                final Ask a = pending;
+                if (a == null) {
+                    return false;
+                }
+                a.answer.complete(st.value());
+            } else {
+                final JsonObject a = st.act().deepCopy();
+                a.addProperty("replay", true);
+                if ("card".equals(a.get("type").getAsString())) {
+                    CardView cv = cards.get(a.get("id").getAsInt());
+                    if (cv == null || !st.name().equals(Pacer.name(cv)) || !st.zone().equals(String.valueOf(cv.getZone()))) {
+                        cv = cards.values().stream().filter(c -> st.name().equals(Pacer.name(c)) && st.zone().equals(String.valueOf(c.getZone())))
+                                .findFirst().orElse(null);
+                    }
+                    if (cv == null) {
+                        return false;
+                    }
+                    // Forge can refuse a click for a moment while it settles (e.g. the card is still untapping): retry
+                    final CardView card = cv;
+                    final long end = System.currentTimeMillis() + 4_000;
+                    while (true) {
+                        final boolean[] done = {false};
+                        try {
+                            SwingUtilities.invokeAndWait(() -> done[0] = getGameController() != null && getGameController().selectCard(card, null, null));
+                        } catch (Exception e) {
+                            return false;
+                        }
+                        if (done[0]) {
+                            break;
+                        }
+                        if (System.currentTimeMillis() > end || !repeating || !matches(st)) {
+                            return false;
+                        }
+                        sleep(100);
+                    }
+                    awaitChange(before, 5_000);
+                    return true;
+                }
+                SwingUtilities.invokeLater(() -> act(a));
+            }
+            awaitChange(before, 5_000); // let Forge take it in before looking for the next input
+            return true;
         }
 
         /** Block the game thread until the board answers. */
@@ -942,6 +1170,15 @@ public final class Bridge {
             o.addProperty("stops", !autoPass ? "all" : everyStep ? "held" : "smart");
             o.addProperty("skip", skipFromTurn < 0 ? "" : skipToMyTurn ? "myturn" : "turn");
             o.addProperty("holding", holding); // true while the bridge waits for you because you have a play
+            final List<Step> cycle = offer;
+            if (repeating || cycle != null && loops.yours != null) {
+                final JsonObject r = new JsonObject();
+                r.addProperty("label", loops.yours == null ? "" : loops.yours);
+                r.addProperty("running", repeating);
+                r.addProperty("done", repeatDone);
+                r.addProperty("total", repeatTotal);
+                o.add("shortcut", r);
+            }
             if (loops.running) {
                 final JsonObject l = new JsonObject();
                 l.addProperty("label", loops.label);

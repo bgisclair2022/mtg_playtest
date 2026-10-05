@@ -277,3 +277,7 @@ button.chip { cursor: pointer; }
 .loop-bar span { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .loop-bar button { grid-column: 2; grid-row: 1 / 3; padding: 4px 10px; font-size: 12px; white-space: nowrap; }
 .loop-bar.paused { border-color: var(--line); box-shadow: none; }
+.loop-bar.mine { border-color: var(--line); box-shadow: none; }
+.loop-bar .reps { display: flex; gap: 4px; grid-column: 1 / 3; overflow: visible; }
+.loop-bar .reps button { grid-column: auto; grid-row: auto; flex: 1; padding: 2px 6px; }
+.loop-bar .reps .x { flex: 0; color: var(--muted); }

@@ -288,6 +288,13 @@ function Lane({ s, me, action }) {
         <div><b>∞ Loop</b> · cycle ${s.loop.cycles}</div><span>${s.loop.label}</span>
         ${s.loop.paused ? html`<button onClick=${() => act('loop', { value: 'run' })}>Fast-forward</button>`
           : html`<button onClick=${() => act('loop', { value: 'stop' })}>Stop to respond</button>`}</div>`
+      : s.shortcut && !s.gameOver ? html`<div class="loop-bar mine" title=${`${s.shortcut.label}. You're repeating a loop: the board can do your same clicks again for you (a shortcut, CR 732.2a). Jace still gets priority every time.`}>
+        ${s.shortcut.running
+          ? html`<div><b>↻ Repeating</b> ${s.shortcut.done} / ${s.shortcut.total}</div><span>${s.shortcut.label}</span>
+            <button onClick=${() => act('repeat', { value: 0 })}>Stop</button>`
+          : html`<div><b>↻ Your loop</b> · repeat it</div>
+            <span class="reps">${[5, 20, 100].map((n) => html`<button onClick=${() => act('repeat', { value: n })}>×${n}</button>`)}
+              <button class="x" title="Dismiss" onClick=${() => act('repeat', { value: -1 })}>✕</button></span>`}</div>`
       : html`<div class="g-phases">${PHASES.map(([label, keys]) => html`<span class=${!s.gameOver && keys.includes(s.phaseKey) ? 'on' : ''}>${label}</span>`)}</div>`}
     </div>
     <div class="g-stack">
