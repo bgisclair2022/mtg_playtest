@@ -145,8 +145,11 @@ def claude_exe():
     found = shutil.which("claude")
     if found:
         return found
-    bundled = glob.glob(os.path.join(os.environ.get("APPDATA", ""), "Claude", "claude-code", "*", "claude.exe"))
-    return max(bundled, key=lambda p: [int(x) for x in os.path.basename(os.path.dirname(p)).split(".") if x.isdigit()]) if bundled else None
+    root = os.path.join(os.environ.get("APPDATA", ""), "Claude", "claude-code")
+    # claude-code\<version>\claude.exe, or (newer desktop apps) claude-code\<version>\<id>\claude.exe
+    bundled = glob.glob(os.path.join(root, "*", "claude.exe")) + glob.glob(os.path.join(root, "*", "*", "claude.exe"))
+    version = lambda p: [int(x) for x in os.path.relpath(p, root).split(os.sep)[0].split(".") if x.isdigit()]
+    return max(bundled, key=version) if bundled else None
 
 
 def lessons():
